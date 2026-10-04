@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <NoWarn>$(NoWarn);CS8632</NoWarn>
+    <AssemblyName>Dismantleheim</AssemblyName>
+    <RootNamespace>Dismantleheim</RootNamespace>
+    <Version>0.1.0</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ValheimLibDir Condition="'$(ValheimLibDir)' == ''">E:\Scripts\Valheim Mods\Reqs</ValheimLibDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Single plugin DLL: Core logic compiled into the plugin for BepInEx install simplicity. -->
+    <Compile Include="src\**\*.cs" />
+    <Compile Include="src.Core\*.cs" />
+    <Compile Remove="**/obj/**" />
+    <Compile Remove="**/bin/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="$(ValheimLibDir)\*.dll">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="assets\infinity_tools_dismantleheim.yaml" LogicalName="Dismantleheim.assets.infinity_tools_dismantleheim.yaml" />
+  </ItemGroup>
+
+  <Target Name="ValidateValheimLibDir" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(ValheimLibDir)')" Text="Valheim library directory not found: $(ValheimLibDir)" />
+  </Target>
+</Project>

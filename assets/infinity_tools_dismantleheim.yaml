@@ -1,0 +1,8 @@
+# Dismantleheim owned Infinity Hammer tool entry (template).
+# Merged idempotently into config/infinity_tools.yaml by Dismantleheim.
+# Marker: dismantleheim-tool-v1 — do not duplicate this name.
+- name: Dismantleheim
+  description: "Queued dismantle mode. Left-click to flag pieces, Shift+Mouse3 to sample prefab filter, hold Mouse3 to confirm. ActivateKey (default Delete) also toggles."
+  icon: Hammer
+  instant: true
+  command: dismantleheim activate
