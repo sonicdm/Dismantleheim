@@ -12,10 +12,11 @@ namespace Dismantleheim.Tests.Core
 			bool piece = true,
 			bool removable = true,
 			bool env = false,
-			bool stale = false)
+			bool stale = false,
+			bool preview = true)
 		{
-			TargetKind kind = Eligibility.Classify(piece, removable, env);
-			return new TargetIdentity(1, n, "world", prefab, piece, removable, env, kind, stale);
+			TargetKind kind = Eligibility.Classify(piece, removable, env, preview);
+			return new TargetIdentity(1, n, "world", prefab, piece, removable, env, kind, preview, stale);
 		}
 
 		[Fact]
@@ -104,6 +105,39 @@ namespace Dismantleheim.Tests.Core
 		}
 
 		[Fact]
+		public void Eligibility_EnvWithoutPreview_Unsupported()
+		{
+			var env = Id(1, "MineRock", piece: false, removable: false, env: true, preview: false);
+			Assert.Equal(TargetKind.Unsupported, env.Kind);
+			Assert.False(Eligibility.IsEligible(env, "MineRock", true, null, null, out var reason));
+			Assert.Equal(EligibilityRejectReason.UnsupportedType, reason);
+		}
+
+		[Fact]
+		public void Eligibility_Commit_IgnoresLaterCandidateFilter()
+		{
+			var wood = Id(1, "woodwall");
+			var stone = Id(2, "stonewall");
+			Assert.True(Eligibility.IsEligible(wood, null, true, null, null, out _));
+			Assert.True(Eligibility.IsEligible(stone, "stonewall", true, null, null, out _));
+
+			// After filter switches to stonewall, candidate selection would reject wood —
+			// but commit must keep previously queued wood.
+			Assert.False(Eligibility.IsEligible(wood, "stonewall", true, null, null, out _));
+			Assert.True(Eligibility.IsEligibleForCommit(wood, true, null, null, out _));
+			Assert.True(Eligibility.IsEligibleForCommit(stone, true, null, null, out _));
+		}
+
+		[Fact]
+		public void Eligibility_Commit_KeepsQueuedEnvironmentAfterFilterClear()
+		{
+			var env = Id(1, "OakTree", piece: false, removable: false, env: true);
+			Assert.True(Eligibility.IsEligible(env, "OakTree", true, null, null, out _));
+			Assert.False(Eligibility.IsEligible(env, null, true, null, null, out _));
+			Assert.True(Eligibility.IsEligibleForCommit(env, true, null, null, out _));
+		}
+
+		[Fact]
 		public void StateMachine_EmptyQueue_CannotHold()
 		{
 			var sm = new DismantleStateMachine();
@@ -181,7 +215,7 @@ namespace Dismantleheim.Tests.Core
 		public void TargetIdentity_Equality_ByZdoAndSession()
 		{
 			var a = Id(10, "a");
-			var b = new TargetIdentity(1, 10, "world", "other", true, true, false, TargetKind.BuildPiece);
+			var b = new TargetIdentity(1, 10, "world", "other", true, true, false, TargetKind.BuildPiece, true);
 			Assert.True(a.Equals(b));
 		}
 	}

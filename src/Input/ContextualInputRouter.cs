@@ -30,10 +30,13 @@ namespace Dismantleheim.Input
 				session.IgnorePieceChangeFrames--;
 			}
 
-			bool menuOrFocus = ConsoleIsOpen() || ChatIsOpen() || TextInputFocused()
-			                   || InventoryGui.IsVisible() || MenuIsOpen() || !Application.isFocused;
+			// Ownership / world epoch must run even while menus steal selection input.
+			ToolIdentityTracker.Tick(session);
 
-			// Escape / focus cancel MUST run before hold completion.
+			bool menuOrFocus = ConsoleIsOpen() || ChatIsOpen() || TextInputFocused()
+			                   || InventoryGui.IsVisible() || MenuIsOpen() || PieceSelectionVisible()
+			                   || !Application.isFocused;
+
 			bool mouse3 = ZInput.GetMouseButton(2);
 			bool mouse3Down = mouse3 && !_mouse3WasDown;
 			bool mouse3Up = !mouse3 && _mouse3WasDown;
@@ -76,6 +79,7 @@ namespace Dismantleheim.Input
 				if (session.ConfirmHold.IsHolding)
 				{
 					session.ConfirmHold.Cancel();
+					session.ClearConfirmSnapshot();
 					session.StateMachine.TryTransition(DismantleTransition.CancelHold, session.Queue.Count, out _);
 				}
 
@@ -93,8 +97,6 @@ namespace Dismantleheim.Input
 				ResetLatches();
 				_needsPhysicalMouse3Up = true;
 			}
-
-			ToolIdentityTracker.Tick(session);
 
 			if (!session.IsActive)
 			{
@@ -120,9 +122,16 @@ namespace Dismantleheim.Input
 				session.LastRejectReason = reject;
 			}
 
-			// Shift + Mouse3: prefab sample (never confirmation).
+			// Shift + Mouse3: cancel any hold first, then sample (never confirmation).
 			if (shift && mouse3Down)
 			{
+				if (session.ConfirmHold.IsHolding)
+				{
+					session.ConfirmHold.Cancel();
+					session.ClearConfirmSnapshot();
+					session.StateMachine.TryTransition(DismantleTransition.CancelHold, session.Queue.Count, out _);
+				}
+
 				_shiftSampleLatch = true;
 				string prefab = session.HoverTarget != null ? session.HoverTarget.PrefabName : null;
 				if (session.Sampler.TrySample(prefab, out string filter))
@@ -138,6 +147,7 @@ namespace Dismantleheim.Input
 				if (session.ConfirmHold.IsHolding)
 				{
 					session.ConfirmHold.Cancel();
+					session.ClearConfirmSnapshot();
 					session.StateMachine.TryTransition(DismantleTransition.CancelHold, session.Queue.Count, out _);
 				}
 
@@ -156,7 +166,6 @@ namespace Dismantleheim.Input
 				return;
 			}
 
-			// Freeze queue edits during hold: selection clicks ignored while HoldingConfirm.
 			bool holding = session.StateMachine.State == DismantleState.HoldingConfirm
 			               || session.ConfirmHold.IsHolding;
 
@@ -254,6 +263,18 @@ namespace Dismantleheim.Input
 		private static bool MenuIsOpen()
 		{
 			return Menu.IsVisible();
+		}
+
+		private static bool PieceSelectionVisible()
+		{
+			try
+			{
+				return Hud.IsPieceSelectionVisible();
+			}
+			catch
+			{
+				return false;
+			}
 		}
 	}
 }

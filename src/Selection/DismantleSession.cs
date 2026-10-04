@@ -5,6 +5,8 @@ using Dismantleheim.Input;
 using Dismantleheim.Integration;
 using Dismantleheim.Removal;
 using Dismantleheim.UI;
+using UnityEngine;
+using UObject = UnityEngine.Object;
 
 namespace Dismantleheim.Selection
 {
@@ -28,16 +30,40 @@ namespace Dismantleheim.Selection
 
 		public bool IsActive => StateMachine.State != DismantleState.Inactive;
 
+		public bool TryActivate(string source, out string reject)
+		{
+			reject = null;
+			if (StateMachine.State != DismantleState.Inactive)
+			{
+				return true;
+			}
+
+			Player player = Player.m_localPlayer;
+			if ((UObject)(object)player == (UObject)null)
+			{
+				reject = "no-player";
+				return false;
+			}
+
+			// Ownership requires hammer place-mode so attack suppression cannot stick on a non-tool.
+			if (!player.InPlaceMode())
+			{
+				reject = "not-in-place-mode";
+				DismantleheimPlugin.ModLogger?.LogInfo("Dismantleheim activate rejected: " + reject);
+				return false;
+			}
+
+			StateMachine.TryTransition(DismantleTransition.Activate, Queue.Count, out _);
+			IgnorePieceChangeFrames = 3;
+			ToolIdentityTracker.OnActivated();
+			ContextualInputRouter.ResetLatches();
+			DismantleheimPlugin.ModLogger?.LogInfo("Dismantleheim activate via " + source);
+			return true;
+		}
+
 		public void Activate(string source)
 		{
-			if (StateMachine.State == DismantleState.Inactive)
-			{
-				StateMachine.TryTransition(DismantleTransition.Activate, Queue.Count, out _);
-				IgnorePieceChangeFrames = 3;
-				ToolIdentityTracker.OnActivated();
-				ContextualInputRouter.ResetLatches();
-				DismantleheimPlugin.ModLogger?.LogInfo("Dismantleheim activate via " + source);
-			}
+			TryActivate(source, out _);
 		}
 
 		public void Deactivate(string source)
@@ -58,11 +84,20 @@ namespace Dismantleheim.Selection
 			DismantleheimPlugin.ModLogger?.LogInfo("Dismantleheim deactivate via " + source + " queue=" + Queue.Count);
 		}
 
+		/// <summary>Always clears queue/filter — used for disconnect/world epoch, not ordinary tool switch.</summary>
 		public void ResetHard(string source)
 		{
 			Queue.Clear();
 			Sampler.Clear();
-			Deactivate(source);
+			ConfirmHold.Cancel();
+			ConfirmHold.Rearm();
+			ClearConfirmSnapshot();
+			HoverTarget = null;
+			StateMachine.ForceInactive();
+			ToolIdentityTracker.OnDeactivated();
+			ContextualInputRouter.ResetLatches();
+			HoverHighlighter.ClearAll();
+			DismantleheimPlugin.ModLogger?.LogInfo("Dismantleheim hard-reset via " + source);
 		}
 
 		public void ToggleActivate(string source)
@@ -136,15 +171,16 @@ namespace Dismantleheim.Selection
 						continue;
 					}
 
-					if (!Eligibility.IsEligible(
+					// Commit must not re-apply the current candidate filter to a mixed queue.
+					if (!Eligibility.IsEligibleForCommit(
 						    live,
-						    Sampler.ActiveFilter,
 						    AllowEnvWithFilter,
 						    ExtraDeny(),
 						    ExtraAllow(),
-						    out _))
+						    out EligibilityRejectReason reason))
 					{
 						skipped.Add(live);
+						DismantleheimPlugin.DebugLog("Commit safety skip " + live.PrefabName + " " + reason);
 						continue;
 					}
 
@@ -189,7 +225,7 @@ namespace Dismantleheim.Selection
 				if (StateMachine.State == DismantleState.Executing || StateMachine.State == DismantleState.Validating)
 				{
 					StateMachine.ForceInactive();
-					StateMachine.TryTransition(DismantleTransition.Activate, Queue.Count, out _);
+					TryActivate("post-commit", out _);
 					SyncStateAfterSelectionChange();
 				}
 			}

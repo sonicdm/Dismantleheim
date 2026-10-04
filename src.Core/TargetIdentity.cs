@@ -16,6 +16,7 @@ namespace Dismantleheim.Core
 			bool canBeRemoved,
 			bool isEnvironment,
 			TargetKind kind,
+			bool hasScopePreview,
 			bool isStale = false)
 		{
 			UserId = userId;
@@ -26,6 +27,7 @@ namespace Dismantleheim.Core
 			CanBeRemoved = canBeRemoved;
 			IsEnvironment = isEnvironment;
 			Kind = kind;
+			HasScopePreview = hasScopePreview;
 			IsStale = isStale;
 		}
 
@@ -35,7 +37,7 @@ namespace Dismantleheim.Core
 
 		public long NetworkId => ObjectId;
 
-		/// <summary>Unique world/session epoch (e.g. ZNet world UID string).</summary>
+		/// <summary>World UID + connection epoch (not world name alone).</summary>
 		public string WorldSessionKey { get; }
 
 		public string PrefabName { get; }
@@ -47,6 +49,9 @@ namespace Dismantleheim.Core
 		public bool IsEnvironment { get; }
 
 		public TargetKind Kind { get; }
+
+		/// <summary>True when WearNTear (or equivalent) can highlight the full removal scope.</summary>
+		public bool HasScopePreview { get; }
 
 		public bool IsStale { get; }
 

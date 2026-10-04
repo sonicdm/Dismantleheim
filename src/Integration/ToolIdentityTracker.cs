@@ -6,7 +6,7 @@ namespace Dismantleheim.Integration
 {
 	/// <summary>
 	/// Persistent ownership: exit on unequip, leave place-mode, select another piece/tool,
-	/// world/session change, or missing local player.
+	/// world/session epoch change, or missing local player.
 	/// </summary>
 	internal static class ToolIdentityTracker
 	{
@@ -39,7 +39,7 @@ namespace Dismantleheim.Integration
 			Player player = Player.m_localPlayer;
 			if ((Object)(object)player == (Object)null)
 			{
-				session.Deactivate("no-player");
+				session.ResetHard("no-player");
 				return;
 			}
 
@@ -47,7 +47,7 @@ namespace Dismantleheim.Integration
 			if (_activateWorldSession != null
 			    && !string.Equals(world, _activateWorldSession, System.StringComparison.Ordinal))
 			{
-				session.Deactivate("world-session-changed");
+				session.ResetHard("world-session-changed");
 				return;
 			}
 
@@ -77,8 +77,6 @@ namespace Dismantleheim.Integration
 				return;
 			}
 
-			// Selecting any other hammer piece/tool leaves special mode (H05).
-			// Grace: ignore for one frame after activate so IH instant tool selection doesn't immediately cancel.
 			if (session.IgnorePieceChangeFrames > 0)
 			{
 				return;
@@ -129,6 +127,20 @@ namespace Dismantleheim.Integration
 			}
 
 			ToolIdentityTracker.NotifySelectedPieceChanged();
+		}
+	}
+
+	/// <summary>Hard-clear queues on logout / disconnect regardless of ClearQueueOnToolSwitch.</summary>
+	[HarmonyPatch(typeof(Game), nameof(Game.Logout), typeof(bool), typeof(bool))]
+	internal static class GameLogoutHardResetPatch
+	{
+		private static void Prefix()
+		{
+			DismantleSession session = DismantleheimPlugin.Session;
+			if (session != null)
+			{
+				session.ResetHard("logout");
+			}
 		}
 	}
 }

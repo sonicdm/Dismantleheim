@@ -33,6 +33,12 @@ namespace Dismantleheim.Removal
 				return RemovalSkipReason.PermissionDenied;
 			}
 
+			if (!target.HasScopePreview)
+			{
+				message = "no whole-object preview scope";
+				return RemovalSkipReason.PermissionDenied;
+			}
+
 			GameObject go = ExactObjectExecutor.ResolveInstance(target);
 			if ((Object)(object)go == (Object)null)
 			{

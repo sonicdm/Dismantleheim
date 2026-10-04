@@ -78,22 +78,16 @@ namespace Dismantleheim.Removal
 			}
 
 			WearNTear wear = go.GetComponent<WearNTear>();
-			if ((Object)(object)wear != (Object)null)
+			if ((Object)(object)wear == (Object)null)
 			{
-				wear.Remove();
-				return true;
+				// No preview-capable destroy path — refuse (no generic Destroy fallback).
+				error = "no WearNTear scope; refused";
+				return false;
 			}
 
-			// Environment without WearNTear (e.g. some MineRock): only on host.
-			if (target.Kind == TargetKind.Environment && ZNet.instance != null && ZNet.instance.IsServer()
-			    && ZNetScene.instance != null)
-			{
-				ZNetScene.instance.Destroy(go);
-				return true;
-			}
-
-			error = "no WearNTear destroy path";
-			return false;
+			wear.Remove();
+			// Network destroy may complete asynchronously; observer/server confirmation is an acceptance gate.
+			return true;
 		}
 
 		internal static GameObject ResolveInstance(TargetIdentity target)

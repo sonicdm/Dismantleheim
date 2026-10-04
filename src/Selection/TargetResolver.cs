@@ -7,6 +7,9 @@ namespace Dismantleheim.Selection
 {
 	internal static class TargetResolver
 	{
+		/// <summary>
+		/// World UID + peer/session epoch so reconnects do not reuse prior queue identities.
+		/// </summary>
 		public static string CurrentWorldSessionKey()
 		{
 			if (ZNet.instance == null)
@@ -14,7 +17,9 @@ namespace Dismantleheim.Selection
 				return "local-offline";
 			}
 
-			return "uid:" + ZNet.instance.GetWorldUID();
+			long worldUid = ZNet.instance.GetWorldUID();
+			long peer = ZNet.GetUID();
+			return "uid:" + worldUid + "|peer:" + peer;
 		}
 
 		public static bool TryResolveHover(Player player, out TargetIdentity identity, out string rejectDetail)
@@ -59,13 +64,20 @@ namespace Dismantleheim.Selection
 			bool hasPiece = (UObject)(object)piece != (UObject)null;
 			bool canRemove = hasPiece && piece.m_canBeRemoved;
 			bool isEnvironment = IsEnvironmentRoot(root);
-			TargetKind kind = Eligibility.Classify(hasPiece, canRemove, isEnvironment);
+			WearNTear wear = root.GetComponent<WearNTear>();
+			bool hasScopePreview = (UObject)(object)wear != (UObject)null;
+			TargetKind kind = Eligibility.Classify(hasPiece, canRemove, isEnvironment, hasScopePreview);
 
-			// Multi-part environmental: TreeBase/MineRock5 are the removable roots we support.
-			// Child-only colliders without those on the ZNetView root are rejected as unsupported.
 			if (!hasPiece && !isEnvironment)
 			{
 				kind = TargetKind.Unsupported;
+			}
+
+			// Environment without WearNTear cannot show whole-object highlight — unsupported.
+			if (isEnvironment && !hasScopePreview)
+			{
+				kind = TargetKind.Unsupported;
+				rejectDetail = "env-no-scope-preview";
 			}
 
 			string prefab = StripClone(root.name ?? string.Empty);
@@ -90,7 +102,10 @@ namespace Dismantleheim.Selection
 				canRemove,
 				isEnvironment,
 				kind,
+				hasScopePreview,
 				isStale: false);
+
+			// Still return identity for diagnostics; eligibility will reject Unsupported.
 			return true;
 		}
 
@@ -132,6 +147,13 @@ namespace Dismantleheim.Selection
 			if (live.Kind != queued.Kind)
 			{
 				detail = "kind-mismatch";
+				live = null;
+				return false;
+			}
+
+			if (!live.HasScopePreview)
+			{
+				detail = "no-scope-preview";
 				live = null;
 				return false;
 			}

@@ -355,8 +355,16 @@ namespace Dismantleheim
 					switch (sub)
 					{
 						case "activate":
-							session.Activate("command");
-							PrintCmd("Dismantleheim activated.");
+							if (session.TryActivate("command", out string reject))
+							{
+								PrintCmd("Dismantleheim activated.");
+							}
+							else
+							{
+								PrintCmd("Dismantleheim activate rejected: " + (reject ?? "unknown")
+								         + " (equip Hammer / enter place mode).");
+							}
+
 							break;
 						case "deactivate":
 						case "off":
