@@ -1,22 +1,34 @@
+using System;
 using Dismantleheim.Core;
 using UnityEngine;
+using UObject = UnityEngine.Object;
 
 namespace Dismantleheim.Selection
 {
 	internal static class TargetResolver
 	{
+		public static string CurrentWorldSessionKey()
+		{
+			if (ZNet.instance == null)
+			{
+				return "local-offline";
+			}
+
+			return "uid:" + ZNet.instance.GetWorldUID();
+		}
+
 		public static bool TryResolveHover(Player player, out TargetIdentity identity, out string rejectDetail)
 		{
 			identity = null;
 			rejectDetail = null;
-			if ((Object)(object)player == (Object)null)
+			if ((UObject)(object)player == (UObject)null)
 			{
 				rejectDetail = "no-player";
 				return false;
 			}
 
 			GameObject hover = player.GetHoverObject();
-			if ((Object)(object)hover == (Object)null)
+			if ((UObject)(object)hover == (UObject)null)
 			{
 				rejectDetail = "no-hover";
 				return false;
@@ -29,14 +41,14 @@ namespace Dismantleheim.Selection
 		{
 			identity = null;
 			rejectDetail = null;
-			if ((Object)(object)go == (Object)null)
+			if ((UObject)(object)go == (UObject)null)
 			{
 				rejectDetail = "null";
 				return false;
 			}
 
 			ZNetView view = go.GetComponentInParent<ZNetView>();
-			if ((Object)(object)view == (Object)null || !view.IsValid())
+			if ((UObject)(object)view == (UObject)null || !view.IsValid())
 			{
 				rejectDetail = "no-znetview";
 				return false;
@@ -44,22 +56,20 @@ namespace Dismantleheim.Selection
 
 			GameObject root = view.gameObject;
 			Piece piece = root.GetComponent<Piece>();
-			bool hasPiece = (Object)(object)piece != (Object)null;
+			bool hasPiece = (UObject)(object)piece != (UObject)null;
 			bool canRemove = hasPiece && piece.m_canBeRemoved;
 			bool isEnvironment = IsEnvironmentRoot(root);
+			TargetKind kind = Eligibility.Classify(hasPiece, canRemove, isEnvironment);
 
-			string prefab = root.name ?? string.Empty;
-			const string clone = "(Clone)";
-			if (prefab.EndsWith(clone))
+			// Multi-part environmental: TreeBase/MineRock5 are the removable roots we support.
+			// Child-only colliders without those on the ZNetView root are rejected as unsupported.
+			if (!hasPiece && !isEnvironment)
 			{
-				prefab = prefab.Substring(0, prefab.Length - clone.Length).Trim();
+				kind = TargetKind.Unsupported;
 			}
 
-			string session = "local";
-			if (ZNet.instance != null)
-			{
-				session = ZNet.instance.GetWorldName() ?? "local";
-			}
+			string prefab = StripClone(root.name ?? string.Empty);
+			string session = CurrentWorldSessionKey();
 
 			long userId = 0;
 			uint objectId = 0;
@@ -79,33 +89,79 @@ namespace Dismantleheim.Selection
 				hasPiece,
 				canRemove,
 				isEnvironment,
+				kind,
 				isStale: false);
+			return true;
+		}
+
+		public static bool TryRevalidate(TargetIdentity queued, out TargetIdentity live, out string detail)
+		{
+			live = null;
+			detail = null;
+			if (queued == null)
+			{
+				detail = "null";
+				return false;
+			}
+
+			if (!string.Equals(queued.WorldSessionKey, CurrentWorldSessionKey(), StringComparison.Ordinal))
+			{
+				detail = "session-mismatch";
+				return false;
+			}
+
+			GameObject go = Removal.ExactObjectExecutor.ResolveInstance(queued);
+			if ((UObject)(object)go == (UObject)null)
+			{
+				detail = "missing-instance";
+				return false;
+			}
+
+			if (!TryResolveObject(go, out live, out detail))
+			{
+				return false;
+			}
+
+			if (!string.Equals(live.PrefabName, queued.PrefabName, StringComparison.OrdinalIgnoreCase))
+			{
+				detail = "prefab-mismatch";
+				live = null;
+				return false;
+			}
+
+			if (live.Kind != queued.Kind)
+			{
+				detail = "kind-mismatch";
+				live = null;
+				return false;
+			}
+
 			return true;
 		}
 
 		public static bool IsEnvironmentRoot(GameObject root)
 		{
-			if ((Object)(object)root == (Object)null)
+			if ((UObject)(object)root == (UObject)null)
 			{
 				return false;
 			}
 
-			if ((Object)(object)root.GetComponent<TreeBase>() != (Object)null)
+			if ((UObject)(object)root.GetComponent<TreeBase>() != (UObject)null)
 			{
 				return true;
 			}
 
-			if ((Object)(object)root.GetComponent<TreeLog>() != (Object)null)
+			if ((UObject)(object)root.GetComponent<TreeLog>() != (UObject)null)
 			{
 				return true;
 			}
 
-			if ((Object)(object)root.GetComponent<MineRock>() != (Object)null)
+			if ((UObject)(object)root.GetComponent<MineRock>() != (UObject)null)
 			{
 				return true;
 			}
 
-			if ((Object)(object)root.GetComponent<MineRock5>() != (Object)null)
+			if ((UObject)(object)root.GetComponent<MineRock5>() != (UObject)null)
 			{
 				return true;
 			}
@@ -113,22 +169,15 @@ namespace Dismantleheim.Selection
 			return false;
 		}
 
-		public static TargetIdentity MarkStale(TargetIdentity id)
+		public static string StripClone(string prefab)
 		{
-			if (id == null)
+			const string clone = "(Clone)";
+			if (!string.IsNullOrEmpty(prefab) && prefab.EndsWith(clone))
 			{
-				return null;
+				return prefab.Substring(0, prefab.Length - clone.Length).Trim();
 			}
 
-			return new TargetIdentity(
-				id.UserId,
-				id.ObjectId,
-				id.WorldSessionKey,
-				id.PrefabName,
-				id.HasPiece,
-				id.CanBeRemoved,
-				id.IsEnvironment,
-				isStale: true);
+			return prefab ?? string.Empty;
 		}
 	}
 }

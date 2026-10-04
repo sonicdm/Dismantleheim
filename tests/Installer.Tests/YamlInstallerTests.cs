@@ -7,62 +7,100 @@ namespace Dismantleheim.Tests.Installer
 	public class YamlInstallerTests
 	{
 		[Fact]
-		public void Upsert_Fresh_WritesOneEntry()
+		public void OwnedDocument_IsEquipmentKeyedDictionary()
 		{
-			string result = YamlToolInstaller.Upsert("", out bool changed, out int count);
-			Assert.True(changed);
-			Assert.Equal(1, count);
-			Assert.Contains("name: Dismantleheim", result);
-			Assert.Contains("dismantleheim activate", result);
-			Assert.Contains("instant: true", result);
+			string doc = YamlToolInstaller.BuildOwnedDocument();
+			Assert.True(YamlToolInstaller.LooksLikeEquipmentDictionary(doc));
+			Assert.Contains("hammer:", doc);
+			Assert.Contains("name: Dismantleheim", doc);
+			Assert.Contains("dismantleheim activate", doc);
+			Assert.Contains("tabIndex: 0", doc);
+			Assert.Equal(1, YamlToolInstaller.CountNamedToolsInDocument(doc, "Dismantleheim"));
+			Assert.True(YamlToolInstaller.OwnedEntryHasActivateCommand(doc));
 		}
 
 		[Fact]
-		public void Upsert_Twice_Idempotent()
+		public void WriteOwnedDocument_Idempotent()
 		{
-			string first = YamlToolInstaller.Upsert("", out _, out _);
-			string second = YamlToolInstaller.Upsert(first, out bool changed, out int count);
+			YamlToolInstaller.WriteOwnedDocument("", out string first);
+			bool changed = YamlToolInstaller.WriteOwnedDocument(first, out string second);
 			Assert.False(changed);
-			Assert.Equal(1, count);
 			Assert.Equal(Normalize(first), Normalize(second));
 		}
 
 		[Fact]
-		public void Upsert_PreservesOtherTools()
+		public void WriteOwnedFile_DoesNotMutateSharedDefault_ExceptStaleCleanup()
 		{
-			string existing = "- name: OtherTool\n  command: echo hi\n  instant: true\n";
-			string result = YamlToolInstaller.Upsert(existing, out _, out int count);
-			Assert.Equal(1, count);
-			Assert.Contains("name: OtherTool", result);
-			Assert.Contains("name: Dismantleheim", result);
-			Assert.Equal(1, YamlToolInstaller.CountNamedTools(result, "OtherTool"));
-		}
-
-		[Fact]
-		public void Upsert_RemovesDuplicateDismantleheim()
-		{
-			string existing =
-				YamlToolInstaller.BuildOwnedEntry()
-				+ YamlToolInstaller.BuildOwnedEntry();
-			Assert.Equal(2, YamlToolInstaller.CountNamedTools(existing, "Dismantleheim"));
-			string result = YamlToolInstaller.Upsert(existing, out _, out int count);
-			Assert.Equal(1, count);
-		}
-
-		[Fact]
-		public void UpsertToFile_Atomic()
-		{
-			string dir = Path.Combine(Path.GetTempPath(), "dismantleheim-test-" + Path.GetRandomFileName());
+			string dir = Path.Combine(Path.GetTempPath(), "dismantleheim-ih-" + Path.GetRandomFileName());
 			Directory.CreateDirectory(dir);
 			try
 			{
-				string path = Path.Combine(dir, "infinity_tools.yaml");
-				File.WriteAllText(path, "- name: KeepMe\n  command: x\n");
-				YamlToolInstaller.UpsertToFile(path, createDirectory: false);
-				YamlToolInstaller.UpsertToFile(path, createDirectory: false);
-				string text = File.ReadAllText(path);
-				Assert.Equal(1, YamlToolInstaller.CountNamedTools(text, "Dismantleheim"));
-				Assert.Contains("KeepMe", text);
+				string shared = Path.Combine(dir, "infinity_tools.yaml");
+				File.WriteAllText(
+					shared,
+					"hammer:\n- name: OtherTool\n  command: echo hi\n- name: Dismantleheim\n  command: dismantleheim activate\n");
+
+				YamlToolInstaller.WriteOwnedFile(dir, preferToolsSubfolder: false);
+
+				string owned = File.ReadAllText(Path.Combine(dir, YamlToolInstaller.OwnedFileName));
+				Assert.Equal(1, YamlToolInstaller.CountNamedToolsInDocument(owned, "Dismantleheim"));
+				Assert.True(YamlToolInstaller.LooksLikeEquipmentDictionary(owned));
+
+				string sharedAfter = File.ReadAllText(shared);
+				Assert.Equal(0, YamlToolInstaller.CountNamedToolsInDocument(sharedAfter, "Dismantleheim"));
+				Assert.Contains("OtherTool", sharedAfter);
+			}
+			finally
+			{
+				Directory.Delete(dir, true);
+			}
+		}
+
+		[Fact]
+		public void RemoveNamedToolFromShared_PreservesQuotedAndOtherCommands()
+		{
+			string existing =
+				"hammer:\n"
+				+ "- name: OtherTool\n"
+				+ "  command: dismantleheim activate\n"
+				+ "- name: \"Dismantleheim\"\n"
+				+ "  description: custom\n"
+				+ "  command: dismantleheim activate\n"
+				+ "hoe:\n"
+				+ "- name: HoeThing\n"
+				+ "  command: x\n";
+
+			Assert.Equal(1, YamlToolInstaller.CountNamedToolsInDocument(existing, "Dismantleheim"));
+			string cleaned = YamlToolInstaller.RemoveNamedToolFromShared(existing, "Dismantleheim");
+			Assert.Equal(0, YamlToolInstaller.CountNamedToolsInDocument(cleaned, "Dismantleheim"));
+			Assert.Contains("OtherTool", cleaned);
+			Assert.Contains("command: dismantleheim activate", cleaned);
+			Assert.Contains("HoeThing", cleaned);
+		}
+
+		[Fact]
+		public void OwnedEntryHasActivateCommand_IgnoresOtherToolCommand()
+		{
+			string yaml =
+				"hammer:\n"
+				+ "- name: OtherTool\n"
+				+ "  command: dismantleheim activate\n"
+				+ "- name: Dismantleheim\n"
+				+ "  command: something else\n";
+			Assert.False(YamlToolInstaller.OwnedEntryHasActivateCommand(yaml));
+		}
+
+		[Fact]
+		public void WriteOwnedFile_PrefersToolsSubfolderWhenPresent()
+		{
+			string dir = Path.Combine(Path.GetTempPath(), "dismantleheim-ih-" + Path.GetRandomFileName());
+			string tools = Path.Combine(dir, "tools");
+			Directory.CreateDirectory(tools);
+			try
+			{
+				YamlToolInstaller.WriteOwnedFile(dir, preferToolsSubfolder: true);
+				Assert.True(File.Exists(Path.Combine(tools, YamlToolInstaller.OwnedFileName)));
+				Assert.False(File.Exists(Path.Combine(dir, YamlToolInstaller.OwnedFileName)));
 			}
 			finally
 			{

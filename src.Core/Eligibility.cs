@@ -3,22 +3,32 @@ using System.Collections.Generic;
 
 namespace Dismantleheim.Core
 {
+	public enum TargetKind
+	{
+		Unsupported = 0,
+		BuildPiece = 1,
+		Environment = 2
+	}
+
 	public enum EligibilityRejectReason
 	{
 		None,
 		NullTarget,
 		Stale,
+		UnsupportedType,
 		NoPiece,
 		NotRemovable,
 		EnvironmentWithoutFilter,
 		PrefabFilterMismatch,
-		ExtraDeny
+		ExtraDeny,
+		SessionMismatch
 	}
 
 	public static class Eligibility
 	{
 		/// <summary>
 		/// Runtime classification rules (no generated piece allowlist).
+		/// ExtraAllow only overrides ExtraDeny — never bypasses type/removability/environment rules.
 		/// </summary>
 		public static bool IsEligible(
 			TargetIdentity target,
@@ -42,15 +52,18 @@ namespace Dismantleheim.Core
 			}
 
 			string prefab = target.PrefabName ?? string.Empty;
-			if (extraDeny != null && extraDeny.Contains(prefab))
+			bool denied = extraDeny != null && extraDeny.Contains(prefab);
+			bool allowOverride = extraAllow != null && extraAllow.Contains(prefab);
+			if (denied && !allowOverride)
 			{
 				reason = EligibilityRejectReason.ExtraDeny;
 				return false;
 			}
 
-			if (extraAllow != null && extraAllow.Contains(prefab))
+			if (target.Kind == TargetKind.Unsupported)
 			{
-				return true;
+				reason = EligibilityRejectReason.UnsupportedType;
+				return false;
 			}
 
 			bool filterActive = !string.IsNullOrEmpty(prefabFilter);
@@ -62,13 +75,39 @@ namespace Dismantleheim.Core
 					return false;
 				}
 
-				if (target.IsEnvironment && !allowEnvironmentWithFilter)
+				if (target.Kind == TargetKind.Environment)
 				{
-					reason = EligibilityRejectReason.EnvironmentWithoutFilter;
-					return false;
+					if (!allowEnvironmentWithFilter)
+					{
+						reason = EligibilityRejectReason.EnvironmentWithoutFilter;
+						return false;
+					}
+
+					return true;
 				}
 
-				return true;
+				if (target.Kind == TargetKind.BuildPiece)
+				{
+					if (!target.HasPiece || !target.CanBeRemoved)
+					{
+						reason = target.HasPiece ? EligibilityRejectReason.NotRemovable : EligibilityRejectReason.NoPiece;
+						return false;
+					}
+
+					return true;
+				}
+
+				reason = EligibilityRejectReason.UnsupportedType;
+				return false;
+			}
+
+			// Unfiltered: build pieces only.
+			if (target.Kind != TargetKind.BuildPiece)
+			{
+				reason = target.Kind == TargetKind.Environment
+					? EligibilityRejectReason.EnvironmentWithoutFilter
+					: EligibilityRejectReason.UnsupportedType;
+				return false;
 			}
 
 			if (!target.HasPiece)
@@ -83,13 +122,28 @@ namespace Dismantleheim.Core
 				return false;
 			}
 
-			if (target.IsEnvironment)
+			return true;
+		}
+
+		public static TargetKind Classify(bool hasPiece, bool canBeRemoved, bool isEnvironment)
+		{
+			if (isEnvironment)
 			{
-				reason = EligibilityRejectReason.EnvironmentWithoutFilter;
-				return false;
+				return TargetKind.Environment;
 			}
 
-			return true;
+			if (hasPiece && canBeRemoved)
+			{
+				return TargetKind.BuildPiece;
+			}
+
+			if (hasPiece)
+			{
+				// Piece that cannot be removed — still typed, but not eligible.
+				return TargetKind.BuildPiece;
+			}
+
+			return TargetKind.Unsupported;
 		}
 
 		public static HashSet<string> ParsePrefabList(string csv)

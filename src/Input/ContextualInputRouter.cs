@@ -1,7 +1,6 @@
 using Dismantleheim.Core;
 using Dismantleheim.Integration;
 using Dismantleheim.Selection;
-using Jotunn.Managers;
 using UnityEngine;
 
 namespace Dismantleheim.Input
@@ -10,6 +9,14 @@ namespace Dismantleheim.Input
 	{
 		private static bool _mouse3WasDown;
 		private static bool _shiftSampleLatch;
+		private static bool _needsPhysicalMouse3Up;
+
+		public static void ResetLatches()
+		{
+			_mouse3WasDown = false;
+			_shiftSampleLatch = false;
+			_needsPhysicalMouse3Up = true;
+		}
 
 		public static void Tick(DismantleSession session)
 		{
@@ -18,7 +25,53 @@ namespace Dismantleheim.Input
 				return;
 			}
 
-			if (ConsoleIsOpen() || ChatIsOpen() || TextInputFocused())
+			if (session.IgnorePieceChangeFrames > 0)
+			{
+				session.IgnorePieceChangeFrames--;
+			}
+
+			bool menuOrFocus = ConsoleIsOpen() || ChatIsOpen() || TextInputFocused()
+			                   || InventoryGui.IsVisible() || MenuIsOpen() || !Application.isFocused;
+
+			// Escape / focus cancel MUST run before hold completion.
+			bool mouse3 = ZInput.GetMouseButton(2);
+			bool mouse3Down = mouse3 && !_mouse3WasDown;
+			bool mouse3Up = !mouse3 && _mouse3WasDown;
+			_mouse3WasDown = mouse3;
+
+			if (_needsPhysicalMouse3Up)
+			{
+				if (!mouse3)
+				{
+					_needsPhysicalMouse3Up = false;
+					session.ConfirmHold.Rearm();
+				}
+			}
+
+			if (UnityEngine.Input.GetKeyDown(KeyCode.Escape) || ZInput.GetButtonDown("JoyButtonB"))
+			{
+				if (session.IsActive)
+				{
+					if (session.ConfirmHold.IsHolding)
+					{
+						session.ConfirmHold.Cancel();
+						session.StateMachine.TryTransition(DismantleTransition.CancelHold, session.Queue.Count, out _);
+					}
+					else if (session.Queue.Count > 0)
+					{
+						session.Queue.Clear();
+						session.SyncStateAfterSelectionChange();
+					}
+					else
+					{
+						session.Deactivate("escape");
+					}
+
+					return;
+				}
+			}
+
+			if (menuOrFocus)
 			{
 				if (session.ConfirmHold.IsHolding)
 				{
@@ -31,14 +84,20 @@ namespace Dismantleheim.Input
 
 			if (ZInput.GetButtonDown(DismantleheimPlugin.ActivateButtonName))
 			{
+				if (!DismantleheimPlugin.PatchesReady)
+				{
+					return;
+				}
+
 				session.ToggleActivate("hotkey");
+				ResetLatches();
+				_needsPhysicalMouse3Up = true;
 			}
 
 			ToolIdentityTracker.Tick(session);
 
 			if (!session.IsActive)
 			{
-				_mouse3WasDown = ZInput.GetMouseButton(2);
 				return;
 			}
 
@@ -49,12 +108,7 @@ namespace Dismantleheim.Input
 			}
 
 			bool shift = UnityEngine.Input.GetKey(KeyCode.LeftShift) || UnityEngine.Input.GetKey(KeyCode.RightShift);
-			bool mouse3 = ZInput.GetMouseButton(2);
-			bool mouse3Down = mouse3 && !_mouse3WasDown;
-			bool mouse3Up = !mouse3 && _mouse3WasDown;
-			_mouse3WasDown = mouse3;
 
-			// Hover resolve every frame while active.
 			if (TargetResolver.TryResolveHover(player, out TargetIdentity hover, out string reject))
 			{
 				session.HoverTarget = hover;
@@ -81,7 +135,6 @@ namespace Dismantleheim.Input
 
 			if (shift)
 			{
-				// Block confirmation while shift held (H13).
 				if (session.ConfirmHold.IsHolding)
 				{
 					session.ConfirmHold.Cancel();
@@ -91,25 +144,37 @@ namespace Dismantleheim.Input
 				if (mouse3Up)
 				{
 					_shiftSampleLatch = false;
-					session.ConfirmHold.Rearm();
 				}
 
-				TryLeftClickSelect(session, player);
+				TryLeftClickSelect(session);
 				return;
 			}
 
 			if (_shiftSampleLatch && mouse3Up)
 			{
 				_shiftSampleLatch = false;
-				session.ConfirmHold.Rearm();
 				return;
 			}
 
-			// Hold Mouse3 confirm.
-			if (mouse3Down && session.Queue.Count > 0)
+			// Freeze queue edits during hold: selection clicks ignored while HoldingConfirm.
+			bool holding = session.StateMachine.State == DismantleState.HoldingConfirm
+			               || session.ConfirmHold.IsHolding;
+
+			if (!holding)
+			{
+				TryLeftClickSelect(session);
+			}
+
+			if (_needsPhysicalMouse3Up)
+			{
+				return;
+			}
+
+			if (mouse3Down && session.Queue.Count > 0 && !holding)
 			{
 				if (session.StateMachine.TryTransition(DismantleTransition.BeginHold, session.Queue.Count, out _))
 				{
+					session.BeginConfirmSnapshot();
 					session.ConfirmHold.Begin(Time.unscaledTime);
 				}
 			}
@@ -120,6 +185,7 @@ namespace Dismantleheim.Input
 				{
 					session.ConfirmHold.Cancel();
 					session.StateMachine.TryTransition(DismantleTransition.CancelHold, session.Queue.Count, out _);
+					session.ClearConfirmSnapshot();
 					session.ConfirmHold.Rearm();
 				}
 				else
@@ -128,6 +194,7 @@ namespace Dismantleheim.Input
 					if (session.ConfirmHold.CompletedThisFrame)
 					{
 						session.CommitDryOrReal();
+						_needsPhysicalMouse3Up = true;
 					}
 				}
 			}
@@ -135,34 +202,11 @@ namespace Dismantleheim.Input
 			{
 				session.ConfirmHold.Rearm();
 			}
-
-			TryLeftClickSelect(session, player);
-
-			if (ZInput.GetButtonDown("JoyButtonB") || UnityEngine.Input.GetKeyDown(KeyCode.Escape))
-			{
-				// Escape cancels hold or clears selection when active.
-				if (session.ConfirmHold.IsHolding)
-				{
-					session.ConfirmHold.Cancel();
-					session.StateMachine.TryTransition(DismantleTransition.CancelHold, session.Queue.Count, out _);
-				}
-				else if (session.Queue.Count > 0)
-				{
-					session.Queue.Clear();
-					session.SyncStateAfterSelectionChange();
-				}
-			}
 		}
 
-		private static void TryLeftClickSelect(DismantleSession session, Player player)
+		private static void TryLeftClickSelect(DismantleSession session)
 		{
 			if (!ZInput.GetMouseButtonDown(0))
-			{
-				return;
-			}
-
-			// Do not steal clicks while inventory/build list UI has focus.
-			if (InventoryGui.IsVisible())
 			{
 				return;
 			}
@@ -173,16 +217,15 @@ namespace Dismantleheim.Input
 				return;
 			}
 
-			bool allowEnv = session.AllowEnvWithFilter;
 			if (!Eligibility.IsEligible(
 				    target,
 				    session.Sampler.ActiveFilter,
-				    allowEnv,
+				    session.AllowEnvWithFilter,
 				    session.ExtraDeny(),
 				    session.ExtraAllow(),
 				    out EligibilityRejectReason reason))
 			{
-				session.LastRejectReason = reason.ToString() + " prefab=" + target.PrefabName;
+				session.LastRejectReason = reason + " prefab=" + target.PrefabName + " kind=" + target.Kind;
 				DismantleheimPlugin.DebugLog("Reject select: " + session.LastRejectReason);
 				return;
 			}
@@ -206,6 +249,11 @@ namespace Dismantleheim.Input
 		private static bool TextInputFocused()
 		{
 			return GUIUtility.keyboardControl != 0;
+		}
+
+		private static bool MenuIsOpen()
+		{
+			return Menu.IsVisible();
 		}
 	}
 }

@@ -6,9 +6,16 @@ namespace Dismantleheim.Tests.Core
 {
 	public class SelectionAndStateTests
 	{
-		private static TargetIdentity Id(uint n, string prefab, bool piece = true, bool removable = true, bool env = false)
+		private static TargetIdentity Id(
+			uint n,
+			string prefab,
+			bool piece = true,
+			bool removable = true,
+			bool env = false,
+			bool stale = false)
 		{
-			return new TargetIdentity(1, n, "world", prefab, piece, removable, env);
+			TargetKind kind = Eligibility.Classify(piece, removable, env);
+			return new TargetIdentity(1, n, "world", prefab, piece, removable, env, kind, stale);
 		}
 
 		[Fact]
@@ -51,7 +58,7 @@ namespace Dismantleheim.Tests.Core
 		{
 			var env = Id(1, "OakTree", piece: false, removable: false, env: true);
 			Assert.False(Eligibility.IsEligible(env, null, true, null, null, out var reason));
-			Assert.Equal(EligibilityRejectReason.NoPiece, reason);
+			Assert.Equal(EligibilityRejectReason.EnvironmentWithoutFilter, reason);
 		}
 
 		[Fact]
@@ -66,6 +73,34 @@ namespace Dismantleheim.Tests.Core
 		{
 			var p = Id(1, "woodwall");
 			Assert.True(Eligibility.IsEligible(p, null, true, null, null, out _));
+		}
+
+		[Fact]
+		public void Eligibility_Unsupported_RejectedEvenWithExtraAllow()
+		{
+			var bad = Id(1, "MysteryThing", piece: false, removable: false, env: false);
+			Assert.Equal(TargetKind.Unsupported, bad.Kind);
+			var allow = new HashSet<string> { "MysteryThing" };
+			Assert.False(Eligibility.IsEligible(bad, null, true, null, allow, out var reason));
+			Assert.Equal(EligibilityRejectReason.UnsupportedType, reason);
+		}
+
+		[Fact]
+		public void Eligibility_ExtraAllow_DoesNotBypassEnvironmentWithoutFilter()
+		{
+			var env = Id(1, "OakTree", piece: false, removable: false, env: true);
+			var allow = new HashSet<string> { "OakTree" };
+			Assert.False(Eligibility.IsEligible(env, null, true, null, allow, out var reason));
+			Assert.Equal(EligibilityRejectReason.EnvironmentWithoutFilter, reason);
+		}
+
+		[Fact]
+		public void Eligibility_ExtraAllow_OverridesExtraDeny_ForValidPiece()
+		{
+			var p = Id(1, "woodwall");
+			var deny = new HashSet<string> { "woodwall" };
+			var allow = new HashSet<string> { "woodwall" };
+			Assert.True(Eligibility.IsEligible(p, null, true, deny, allow, out _));
 		}
 
 		[Fact]
@@ -135,7 +170,7 @@ namespace Dismantleheim.Tests.Core
 			{
 				Id(1, "woodwall"),
 				Id(2, "id=* area"),
-				new TargetIdentity(1, 3, "world", "gone", true, true, false, isStale: true)
+				Id(3, "gone", stale: true)
 			};
 			var plan = RemovalPlan.FromQueue(queued, id => !id.IsStale, out var skipped);
 			Assert.Equal(1, plan.Count);
@@ -146,7 +181,7 @@ namespace Dismantleheim.Tests.Core
 		public void TargetIdentity_Equality_ByZdoAndSession()
 		{
 			var a = Id(10, "a");
-			var b = new TargetIdentity(1, 10, "world", "other", true, true, false);
+			var b = new TargetIdentity(1, 10, "world", "other", true, true, false, TargetKind.BuildPiece);
 			Assert.True(a.Equals(b));
 		}
 	}

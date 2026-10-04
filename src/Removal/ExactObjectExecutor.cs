@@ -38,21 +38,20 @@ namespace Dismantleheim.Removal
 					continue;
 				}
 
-				bool ok = TryRemove(target, out string err);
-				if (ok)
-				{
-					results.Add(new RemovalResult(target, true, RemovalSkipReason.None, "removed"));
-				}
-				else
-				{
-					results.Add(new RemovalResult(target, false, RemovalSkipReason.PermissionDenied, err));
-				}
+				bool ok = TryRemoveAuthorized(target, out string err);
+				results.Add(ok
+					? new RemovalResult(target, true, RemovalSkipReason.None, "removed")
+					: new RemovalResult(target, false, RemovalSkipReason.PermissionDenied, err));
 			}
 
 			return results;
 		}
 
-		private static bool TryRemove(TargetIdentity target, out string error)
+		/// <summary>
+		/// Authorized exact remove: re-check Player.CheckCanRemovePiece, then WearNTear.Remove
+		/// (network destroy path used by hammer remove). Does not claim Player.RemovePiece() was called.
+		/// </summary>
+		private static bool TryRemoveAuthorized(TargetIdentity target, out string error)
 		{
 			error = string.Empty;
 			GameObject go = ResolveInstance(target);
@@ -62,10 +61,19 @@ namespace Dismantleheim.Removal
 				return false;
 			}
 
+			Player player = Player.m_localPlayer;
 			Piece piece = go.GetComponent<Piece>();
-			if ((Object)(object)piece != (Object)null && !piece.m_canBeRemoved)
+			if ((Object)(object)piece != (Object)null)
 			{
-				error = "m_canBeRemoved=false";
+				if ((Object)(object)player == (Object)null || !PlayerRemoveAccess.CanRemovePiece(player, piece))
+				{
+					error = "CheckCanRemovePiece failed at commit";
+					return false;
+				}
+			}
+			else if (target.Kind != TargetKind.Environment)
+			{
+				error = "not a supported piece/environment";
 				return false;
 			}
 
@@ -76,13 +84,15 @@ namespace Dismantleheim.Removal
 				return true;
 			}
 
-			if (ZNetScene.instance != null)
+			// Environment without WearNTear (e.g. some MineRock): only on host.
+			if (target.Kind == TargetKind.Environment && ZNet.instance != null && ZNet.instance.IsServer()
+			    && ZNetScene.instance != null)
 			{
 				ZNetScene.instance.Destroy(go);
 				return true;
 			}
 
-			error = "no WearNTear / ZNetScene";
+			error = "no WearNTear destroy path";
 			return false;
 		}
 

@@ -2,7 +2,6 @@ using System;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
-using Dismantleheim.Core;
 using Dismantleheim.Install;
 using Dismantleheim.Integration;
 using Dismantleheim.Input;
@@ -61,9 +60,14 @@ namespace Dismantleheim
 
 		internal static DismantleSession Session { get; private set; }
 
+		/// <summary>False when Harmony PatchAll failed — activation stays closed.</summary>
+		internal static bool PatchesReady { get; private set; }
+
 		private Harmony _harmony;
 
 		private ButtonConfig _activateButton;
+
+		private bool _clientSystemsStarted;
 
 		private void Awake()
 		{
@@ -87,6 +91,15 @@ namespace Dismantleheim
 				ActiveInCustomGUI = false
 			};
 			InputManager.Instance.AddButton(PluginGuid, _activateButton);
+			if (ActivateKey != null)
+			{
+				ActivateKey.SettingChanged += OnActivateKeyChanged;
+			}
+
+			if (Enabled != null)
+			{
+				Enabled.SettingChanged += OnEnabledChanged;
+			}
 
 			bool ihPresent = InfinityHammerDetector.IsInstalled(out string ihGuid, out string ihVersion);
 			if (ihPresent)
@@ -107,11 +120,75 @@ namespace Dismantleheim
 			try
 			{
 				_harmony.PatchAll(typeof(DismantleheimPlugin).Assembly);
+				PatchesReady = true;
+				_clientSystemsStarted = true;
 				Logger.LogInfo(PluginName + " " + PluginVersion + " loaded.");
 			}
 			catch (Exception ex)
 			{
-				Logger.LogError(PluginName + " failed to patch: " + ex);
+				PatchesReady = false;
+				Logger.LogError(PluginName + " failed to patch (fail-closed): " + ex);
+				try
+				{
+					_harmony.UnpatchSelf();
+				}
+				catch
+				{
+					// ignored
+				}
+			}
+		}
+
+		private void OnDestroy()
+		{
+			if (ActivateKey != null)
+			{
+				ActivateKey.SettingChanged -= OnActivateKeyChanged;
+			}
+
+			if (Enabled != null)
+			{
+				Enabled.SettingChanged -= OnEnabledChanged;
+			}
+
+			if (Session != null && Session.IsActive)
+			{
+				Session.ResetHard("unload");
+			}
+
+			HoverHighlighter.ClearAll();
+			ContextualInputRouter.ResetLatches();
+
+			if (_harmony != null)
+			{
+				try
+				{
+					_harmony.UnpatchSelf();
+				}
+				catch (Exception ex)
+				{
+					Logger.LogWarning("Unpatch failed: " + ex.Message);
+				}
+
+				_harmony = null;
+			}
+
+			PatchesReady = false;
+		}
+
+		private void OnActivateKeyChanged(object sender, EventArgs e)
+		{
+			if (_activateButton != null && ActivateKey != null)
+			{
+				_activateButton.Key = ActivateKey.Value;
+			}
+		}
+
+		private void OnEnabledChanged(object sender, EventArgs e)
+		{
+			if (!IsModEnabled() && Session != null && Session.IsActive)
+			{
+				Session.ResetHard("disabled");
 			}
 		}
 
@@ -128,7 +205,7 @@ namespace Dismantleheim
 				"Input",
 				"ActivateKey",
 				KeyCode.Delete,
-				"Toggle Dismantleheim mode on/off. Default: Delete.");
+				"Toggle Dismantleheim mode on/off. Default: Delete. Live-rebinding updates the Jötunn button.");
 
 			ConfirmHoldSeconds = Config.Bind(
 				"Confirm",
@@ -159,18 +236,18 @@ namespace Dismantleheim
 				"Selection",
 				"ExtraAllowPrefabs",
 				"",
-				"Comma-separated prefab names always selectable (still subject to permissions on execute).");
+				"Comma-separated prefab names that ignore ExtraDeny only. Does not bypass type/removability/environment rules.");
 
 			InstallInfinityHammerTool = Config.Bind(
 				"Integration",
 				"InstallInfinityHammerTool",
 				true,
-				"Upsert Dismantleheim into Infinity Hammer tools YAML when Infinity Hammer is installed.");
+				"Write owned infinity_tools_dismantleheim.yaml when Infinity Hammer is installed.");
 			PreferInfinityHammerOnly = Config.Bind(
 				"Integration",
 				"PreferInfinityHammerOnly",
 				true,
-				"Do not add a second hammer item; Tools YAML only when Infinity Hammer is present.");
+				"Architecture: never spawn an extra inventory Hammer; Tools YAML + ActivateKey/console only.");
 
 			DryRunOnly = Config.Bind(
 				"Removal",
@@ -181,7 +258,7 @@ namespace Dismantleheim
 
 		private void Update()
 		{
-			if (!IsModEnabled() || Session == null)
+			if (!_clientSystemsStarted || !PatchesReady || !IsModEnabled() || Session == null)
 			{
 				return;
 			}
@@ -198,7 +275,7 @@ namespace Dismantleheim
 
 		private void OnGUI()
 		{
-			if (!IsModEnabled() || Session == null || !Session.IsActive)
+			if (!_clientSystemsStarted || !PatchesReady || !IsModEnabled() || Session == null || !Session.IsActive)
 			{
 				return;
 			}
@@ -262,6 +339,18 @@ namespace Dismantleheim
 						return;
 					}
 
+					if (!PatchesReady && !GUIManager.IsHeadless())
+					{
+						PrintCmd("Dismantleheim patches failed; activation closed.");
+						return;
+					}
+
+					if (!IsModEnabled())
+					{
+						PrintCmd("Dismantleheim disabled in config.");
+						return;
+					}
+
 					string sub = args.Length > 1 ? args[1].ToLowerInvariant() : "status";
 					switch (sub)
 					{
@@ -287,7 +376,8 @@ namespace Dismantleheim
 								"state=" + session.StateMachine.State
 								+ " queue=" + session.Queue.Count
 								+ " filter=" + (session.Sampler.ActiveFilter ?? "(none)")
-								+ " dryRun=" + (DryRunOnly != null && DryRunOnly.Value));
+								+ " dryRun=" + (DryRunOnly != null && DryRunOnly.Value)
+								+ " patches=" + PatchesReady);
 							break;
 					}
 				});

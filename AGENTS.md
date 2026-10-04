@@ -16,9 +16,10 @@ Valheim **BepInEx** mod: Satisfactory-inspired queued dismantle through the Hamm
 ## Product rules
 
 - Never wildcard / `id=*` area deletes. Exact queued identities only.
-- No second inventory Hammer from this mod. IH entry via YAML upsert into `infinity_tools.yaml`.
-- Unfiltered selection: `Piece` + `m_canBeRemoved`, deny environment (`TreeBase` / `MineRock*` / …). No generated piece allowlist.
+- No second inventory Hammer from this mod. IH entry via owned equipment-keyed `infinity_tools_dismantleheim.yaml` (never append into shared default except stale cleanup).
+- Unfiltered selection: `Piece` + `m_canBeRemoved`, deny environment (`TreeBase` / `MineRock*` / …). No generated piece allowlist. `ExtraAllow` never bypasses type/env rules.
 - Prefab sample (Shift+Mouse3) may allow matching environment into the queue; permissions still apply at execute.
+- Real remove (when dry-run off): `CheckCanRemovePiece` + ward `CheckAccess` + `WearNTear.Remove` — not `Player.RemovePiece`.
 - v0.1: `Removal.DryRunOnly=true` by default — no world deletes until acceptance gate for 0.2.
 - Client systems skip when `GUIManager.IsHeadless()`.
 - Do not patch Infinity Hammer private APIs.

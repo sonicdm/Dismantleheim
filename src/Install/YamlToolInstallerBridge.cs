@@ -19,9 +19,12 @@ namespace Dismantleheim.Install
 					return;
 				}
 
-				string path = Path.Combine(configDir, "infinity_tools.yaml");
-				YamlToolInstaller.UpsertToFile(path, createDirectory: false);
-				log?.LogInfo("Dismantleheim: upserted tool entry in " + path);
+				bool preferTools = Directory.Exists(Path.Combine(configDir, "tools"));
+				YamlToolInstaller.WriteOwnedFile(configDir, preferTools);
+				string dest = preferTools
+					? Path.Combine(configDir, "tools", YamlToolInstaller.OwnedFileName)
+					: Path.Combine(configDir, YamlToolInstaller.OwnedFileName);
+				log?.LogInfo("Dismantleheim: wrote owned IH tools file " + dest);
 			}
 			catch (Exception ex)
 			{

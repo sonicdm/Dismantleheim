@@ -41,9 +41,9 @@ Config `Removal.DryRunOnly` defaults to **true**. Completing the confirm hold **
 
 ## Authority / multiplayer
 
-- Building pieces use the vanilla remove path when dry-run is off.
+- When dry-run is off, pieces are destroyed via `WearNTear.Remove` after `CheckCanRemovePiece` + ward `CheckAccess` (not a direct `Player.RemovePiece` call). See `docs/authority.md`.
 - Environment (rocks/trees) on a vanilla dedicated server is **not** promised; host/admin limits are documented as we harden 0.2+.
-- Observers do not need this mod to see ordinary piece removals.
+- Observers see ordinary networked WearNTear destroys without needing this mod.
 
 ## Config
 
@@ -78,7 +78,7 @@ Config `Removal.DryRunOnly` defaults to **true**. Completing the confirm hold **
 
 ## Uninstall
 
-Remove the DLL. Optional: delete the `Dismantleheim` entry from `BepInEx/config/infinity_tools.yaml` (stale entries fail benignly).
+Remove the DLL. Optional: delete `BepInEx/config/infinity_tools_dismantleheim.yaml` (or under `config/tools/`). A prior shared-file entry is cleaned on next install write.
 
 ## Acceptance tests
 

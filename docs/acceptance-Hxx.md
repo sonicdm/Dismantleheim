@@ -40,7 +40,7 @@ Record results before shipping a version gate. Fill Date / Game / IH / Result co
 | H18 | Chunk unload / disconnect | No stale delete; visuals cleared | 0.1 | pending | |
 | H19 | Ward / restricted | Denied + reason | 0.2 | pending | |
 | H20 | Vanilla observer | Sync without mod | 0.2 | pending | |
-| H21 | YAML install twice | One entry; others preserved | 0.1 | **automated pass** | `Installer.Tests` |
+| H21 | YAML install twice | One owned equipment-keyed entry; shared tools preserved | 0.1 | pending (in-game) / synthetic pass | `Installer.Tests` cover owned `hammer:` doc + shared stale cleanup; menu load still pending |
 | H22 | 100+ selection | Bounded cost | 0.1 | pending | |
 | H23 | Multi-part tree/rock | Scope match or reject | 0.2 | pending | |
 | H24 | Crash mid-hold | No deferred remove | 0.1 | pending | |
@@ -54,8 +54,8 @@ Record results before shipping a version gate. Fill Date / Game / IH / Result co
 ```
 
 Core.Tests cover queue, sampler, eligibility, FSM, confirm hold, removal plan.
-Installer.Tests cover H21-style YAML upsert.
-AssemblyCompatibility.Tests check `Piece.m_canBeRemoved` / `Player.RemovePiece` when Reqs present.
+Installer.Tests cover owned equipment-keyed YAML write, quoted-name cleanup, and “other tool has activate command” association (synthetic; not IH menu load).
+AssemblyCompatibility.Tests check `Piece.m_canBeRemoved` / `Player.RemovePiece` / `CheckCanRemovePiece` when Reqs present.
 
 ## Ship rule
 

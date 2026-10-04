@@ -15,6 +15,7 @@ namespace Dismantleheim.Core
 			bool hasPiece,
 			bool canBeRemoved,
 			bool isEnvironment,
+			TargetKind kind,
 			bool isStale = false)
 		{
 			UserId = userId;
@@ -24,6 +25,7 @@ namespace Dismantleheim.Core
 			HasPiece = hasPiece;
 			CanBeRemoved = canBeRemoved;
 			IsEnvironment = isEnvironment;
+			Kind = kind;
 			IsStale = isStale;
 		}
 
@@ -31,9 +33,9 @@ namespace Dismantleheim.Core
 
 		public uint ObjectId { get; }
 
-		/// <summary>Compatibility alias used in logs (object id).</summary>
 		public long NetworkId => ObjectId;
 
+		/// <summary>Unique world/session epoch (e.g. ZNet world UID string).</summary>
 		public string WorldSessionKey { get; }
 
 		public string PrefabName { get; }
@@ -43,6 +45,8 @@ namespace Dismantleheim.Core
 		public bool CanBeRemoved { get; }
 
 		public bool IsEnvironment { get; }
+
+		public TargetKind Kind { get; }
 
 		public bool IsStale { get; }
 

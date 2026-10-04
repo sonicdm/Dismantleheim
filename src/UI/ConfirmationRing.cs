@@ -1,4 +1,3 @@
-using Dismantleheim.Core;
 using Dismantleheim.Selection;
 using UnityEngine;
 
@@ -8,7 +7,6 @@ namespace Dismantleheim.UI
 	{
 		public static void Tick(DismantleSession session)
 		{
-			// Progress updated in ContextualInputRouter; draw in OnGUI.
 		}
 
 		public static void DrawGui(DismantleSession session)
@@ -33,20 +31,17 @@ namespace Dismantleheim.UI
 			}
 
 			bool showRing = DismantleheimPlugin.ShowRing == null || DismantleheimPlugin.ShowRing.Value;
-			if (!showRing || !session.ConfirmHold.IsHolding && session.ConfirmHold.Progress <= 0f)
-			{
-				if (!session.ConfirmHold.IsHolding)
-				{
-					return;
-				}
-			}
-
-			float progress = session.ConfirmHold.Progress;
-			if (progress <= 0f && !session.ConfirmHold.IsHolding)
+			if (!showRing)
 			{
 				return;
 			}
 
+			if (!session.ConfirmHold.IsHolding && session.ConfirmHold.Progress <= 0f)
+			{
+				return;
+			}
+
+			float progress = session.ConfirmHold.Progress;
 			Vector2 center = UnityEngine.Input.mousePosition;
 			center.y = Screen.height - center.y;
 			DrawArc(center, 22f, progress);
@@ -60,7 +55,6 @@ namespace Dismantleheim.UI
 			Color track = new Color(0f, 0f, 0f, 0.55f);
 			Color fill = new Color(1f, 0.75f, 0.2f, 0.95f);
 
-			// Background track
 			for (int i = 0; i < segments; i++)
 			{
 				float a0 = (i / (float)segments) * Mathf.PI * 2f - Mathf.PI * 0.5f;

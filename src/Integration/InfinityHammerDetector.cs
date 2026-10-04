@@ -62,22 +62,8 @@ namespace Dismantleheim.Integration
 				}
 			}
 
-			if (guid.IndexOf("infinityhammer", StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				return true;
-			}
-
-			if (guid.IndexOf("infinity_hammer", StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				return true;
-			}
-
-			if (name.IndexOf("Infinity Hammer", StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				return true;
-			}
-
-			return false;
+			// Exact product name only — avoid loose substring matches on unrelated mods.
+			return string.Equals(name, "Infinity Hammer", StringComparison.OrdinalIgnoreCase);
 		}
 
 		public static string FindConfigDirectory()
