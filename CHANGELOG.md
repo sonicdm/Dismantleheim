@@ -2,7 +2,7 @@
 
 ## 0.1.0
 
-Beta — first public package. Dual-mode queued selection, live-tested on a disposable world. Same `0.1.0` tag was refreshed as this landed (icon, live default, docs).
+Beta — first public package. Satisfactory-inspired dual-mode queued selection, live-tested on a disposable world. Same `0.1.0` tag was refreshed as this landed (icon, live default, docs).
 
 ### Modes
 
