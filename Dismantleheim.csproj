@@ -12,6 +12,9 @@
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- Full Windows PDB: ScriptEngine (Mono.Cecil) needs a .pdb beside the DLL. -->
+    <DebugType>full</DebugType>
+    <DebugSymbols>true</DebugSymbols>
     <ValheimLibDir Condition="'$(ValheimLibDir)' == ''">E:\Scripts\Valheim Mods\Reqs</ValheimLibDir>
   </PropertyGroup>
 

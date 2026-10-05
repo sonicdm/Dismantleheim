@@ -67,6 +67,7 @@ jobs:
           name: Dismantleheim ${{ github.ref_name }}
           body_file: release_notes.md
           draft: false
-          prerelease: false
+          # 0.x tags are beta prereleases; 1.0+ are full releases.
+          prerelease: ${{ startsWith(github.ref_name, 'v0.') }}
           fail_on_unmatched_files: false
 

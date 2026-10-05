@@ -1,3 +1,4 @@
+using Dismantleheim.Core;
 using Dismantleheim.Selection;
 using UnityEngine;
 
@@ -5,6 +6,10 @@ namespace Dismantleheim.UI
 {
 	internal static class ConfirmationRing
 	{
+		private static GUIStyle _bannerStyle;
+		private static GUIStyle _subStyle;
+		private static Texture2D _panelTex;
+
 		public static void Tick(DismantleSession session)
 		{
 		}
@@ -16,18 +21,70 @@ namespace Dismantleheim.UI
 				return;
 			}
 
-			if (DismantleheimPlugin.ShowSelectedCount != null && DismantleheimPlugin.ShowSelectedCount.Value)
+			EnsureStyles();
+
+			bool showMode = DismantleheimPlugin.ShowActiveMode == null || DismantleheimPlugin.ShowActiveMode.Value;
+			bool showCount = DismantleheimPlugin.ShowSelectedCount == null || DismantleheimPlugin.ShowSelectedCount.Value;
+
+			// Fixed top-center HUD so the mode is visible even while the IH/build piece table
+			// is still open after selecting the tool (cursor-follow text sits under that panel).
+			if (showMode || showCount)
 			{
-				Vector2 mouse = UnityEngine.Input.mousePosition;
-				float y = Screen.height - mouse.y;
-				string label = "Dismantleheim: " + session.Queue.Count;
-				if (session.Sampler.HasFilter)
+				string banner = showMode ? OperationModeUtil.Banner(session.ActiveMode) : string.Empty;
+				string sub = string.Empty;
+				if (showCount)
 				{
-					label += " [" + session.Sampler.ActiveFilter + "]";
+					sub = session.Queue.Count + " selected";
+					if (session.Sampler.HasFilter)
+					{
+						sub += "  [" + session.Sampler.ActiveFilter + "]";
+					}
+
+					bool dry = DismantleheimPlugin.DryRunOnly == null || DismantleheimPlugin.DryRunOnly.Value;
+					if (dry)
+					{
+						sub += "  (dry-run)";
+					}
 				}
 
-				GUI.color = Color.white;
-				GUI.Label(new Rect(mouse.x + 18f, y + 18f, 320f, 24f), label);
+				float width = 520f;
+				float height = showMode && showCount ? 54f : 32f;
+				if (session.HasContentsLossWarning)
+				{
+					height += 22f;
+				}
+
+				Rect panel = new Rect((Screen.width - width) * 0.5f, 18f, width, height);
+				Color prev = GUI.color;
+				GUI.color = new Color(0f, 0f, 0f, 0.72f);
+				GUI.DrawTexture(panel, _panelTex);
+				GUI.color = prev;
+
+				float y = panel.y + 6f;
+				if (showMode)
+				{
+					_bannerStyle.normal.textColor = session.ActiveMode == OperationMode.MassDelete
+						? new Color(1f, 0.45f, 0.35f, 1f)
+						: new Color(0.85f, 0.95f, 0.55f, 1f);
+					GUI.Label(new Rect(panel.x, y, panel.width, 26f), banner, _bannerStyle);
+					y += 24f;
+				}
+
+				if (showCount)
+				{
+					_subStyle.normal.textColor = new Color(1f, 0.95f, 0.4f, 1f);
+					GUI.Label(new Rect(panel.x, y, panel.width, 22f), sub, _subStyle);
+					y += 20f;
+				}
+
+				if (session.HasContentsLossWarning)
+				{
+					_subStyle.normal.textColor = new Color(1f, 0.35f, 0.2f, 1f);
+					GUI.Label(
+						new Rect(panel.x, y, panel.width, 22f),
+						"WARNING: queued containers hold items",
+						_subStyle);
+				}
 			}
 
 			bool showRing = DismantleheimPlugin.ShowRing == null || DismantleheimPlugin.ShowRing.Value;
@@ -44,16 +101,48 @@ namespace Dismantleheim.UI
 			float progress = session.ConfirmHold.Progress;
 			Vector2 center = UnityEngine.Input.mousePosition;
 			center.y = Screen.height - center.y;
-			DrawArc(center, 22f, progress);
+			DrawArc(center, 22f, progress, session.ActiveMode);
 		}
 
-		private static void DrawArc(Vector2 center, float radius, float progress)
+		private static void EnsureStyles()
+		{
+			if (_panelTex == null)
+			{
+				_panelTex = Texture2D.whiteTexture;
+			}
+
+			if (_bannerStyle == null)
+			{
+				_bannerStyle = new GUIStyle(GUI.skin.label)
+				{
+					alignment = TextAnchor.UpperCenter,
+					fontSize = 18,
+					fontStyle = FontStyle.Bold,
+					wordWrap = false
+				};
+			}
+
+			if (_subStyle == null)
+			{
+				_subStyle = new GUIStyle(GUI.skin.label)
+				{
+					alignment = TextAnchor.UpperCenter,
+					fontSize = 14,
+					fontStyle = FontStyle.Bold,
+					wordWrap = false
+				};
+			}
+		}
+
+		private static void DrawArc(Vector2 center, float radius, float progress, OperationMode mode)
 		{
 			progress = Mathf.Clamp01(progress);
 			const int segments = 48;
 			Texture2D tex = Texture2D.whiteTexture;
 			Color track = new Color(0f, 0f, 0f, 0.55f);
-			Color fill = new Color(1f, 0.75f, 0.2f, 0.95f);
+			Color fill = mode == OperationMode.MassDelete
+				? new Color(1f, 0.4f, 0.25f, 0.95f)
+				: new Color(1f, 0.75f, 0.2f, 0.95f);
 
 			for (int i = 0; i < segments; i++)
 			{

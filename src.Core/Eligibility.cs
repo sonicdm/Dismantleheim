@@ -29,7 +29,8 @@ namespace Dismantleheim.Core
 	{
 		/// <summary>
 		/// Candidate selection rules. Prefab filter gates what may enter the queue next.
-		/// ExtraAllow only overrides ExtraDeny — never bypasses type/removability/environment/preview rules.
+		/// Mass Delete + exact sample authorizes that prefab (including props/trees/Unsupported).
+		/// ExtraAllow only overrides ExtraDeny.
 		/// </summary>
 		public static bool IsEligible(
 			TargetIdentity target,
@@ -39,47 +40,95 @@ namespace Dismantleheim.Core
 			ISet<string> extraAllow,
 			out EligibilityRejectReason reason)
 		{
-			if (!PassesHardSafety(target, extraDeny, extraAllow, out reason))
+			return IsEligible(
+				target,
+				OperationMode.MassDelete,
+				prefabFilter,
+				allowEnvironmentWithFilter,
+				extraDeny,
+				extraAllow,
+				out reason);
+		}
+
+		public static bool IsEligible(
+			TargetIdentity target,
+			OperationMode mode,
+			string prefabFilter,
+			bool allowEnvironmentWithFilter,
+			ISet<string> extraDeny,
+			ISet<string> extraAllow,
+			out EligibilityRejectReason reason)
+		{
+			if (!PassesDenyAllow(target, extraDeny, extraAllow, out reason))
 			{
 				return false;
 			}
 
 			bool filterActive = !string.IsNullOrEmpty(prefabFilter);
-			if (filterActive)
+			bool filterMatches = filterActive
+			                     && string.Equals(
+				                     target.PrefabName ?? string.Empty,
+				                     prefabFilter,
+				                     StringComparison.OrdinalIgnoreCase);
+
+			// Mass Delete + explicit sample: that prefab is eligible regardless of Kind
+			// (props/rocks often resolve as Unsupported or Environment without WearNTear).
+			if (mode == OperationMode.MassDelete && filterMatches && allowEnvironmentWithFilter)
 			{
-				string prefab = target.PrefabName ?? string.Empty;
-				if (!string.Equals(prefab, prefabFilter, StringComparison.OrdinalIgnoreCase))
-				{
-					reason = EligibilityRejectReason.PrefabFilterMismatch;
-					return false;
-				}
-
-				if (target.Kind == TargetKind.Environment)
-				{
-					if (!allowEnvironmentWithFilter)
-					{
-						reason = EligibilityRejectReason.EnvironmentWithoutFilter;
-						return false;
-					}
-
-					return true;
-				}
-
 				if (target.Kind == TargetKind.BuildPiece)
 				{
 					return PassesBuildPieceRemovability(target, out reason);
 				}
 
-				reason = EligibilityRejectReason.UnsupportedType;
+				reason = EligibilityRejectReason.None;
+				return true;
+			}
+
+			if (!PassesHardSafety(target, out reason))
+			{
 				return false;
 			}
 
-			// Unfiltered: build pieces only.
+			// Mass Dismantle: build pieces only — never environment/props (no harvest).
+			if (mode == OperationMode.MassDismantle)
+			{
+				if (target.Kind == TargetKind.Environment)
+				{
+					reason = EligibilityRejectReason.EnvironmentWithoutFilter;
+					return false;
+				}
+
+				if (target.Kind != TargetKind.BuildPiece)
+				{
+					reason = EligibilityRejectReason.UnsupportedType;
+					return false;
+				}
+
+				if (filterActive && !filterMatches)
+				{
+					reason = EligibilityRejectReason.PrefabFilterMismatch;
+					return false;
+				}
+
+				return PassesBuildPieceRemovability(target, out reason);
+			}
+
+			// Mass Delete without filter: build pieces only.
+			if (filterActive && !filterMatches)
+			{
+				reason = EligibilityRejectReason.PrefabFilterMismatch;
+				return false;
+			}
+
+			if (target.Kind == TargetKind.Environment)
+			{
+				reason = EligibilityRejectReason.EnvironmentWithoutFilter;
+				return false;
+			}
+
 			if (target.Kind != TargetKind.BuildPiece)
 			{
-				reason = target.Kind == TargetKind.Environment
-					? EligibilityRejectReason.EnvironmentWithoutFilter
-					: EligibilityRejectReason.UnsupportedType;
+				reason = EligibilityRejectReason.UnsupportedType;
 				return false;
 			}
 
@@ -89,7 +138,6 @@ namespace Dismantleheim.Core
 		/// <summary>
 		/// Commit-time checks for already-queued identities.
 		/// Does not re-apply the current candidate prefab filter (mixed queues stay valid).
-		/// Environment entries keep provenance via their own prefab name.
 		/// </summary>
 		public static bool IsEligibleForCommit(
 			TargetIdentity target,
@@ -98,12 +146,48 @@ namespace Dismantleheim.Core
 			ISet<string> extraAllow,
 			out EligibilityRejectReason reason)
 		{
-			if (!PassesHardSafety(target, extraDeny, extraAllow, out reason))
+			return IsEligibleForCommit(
+				target,
+				OperationMode.MassDelete,
+				allowEnvironmentWithFilter,
+				extraDeny,
+				extraAllow,
+				out reason);
+		}
+
+		public static bool IsEligibleForCommit(
+			TargetIdentity target,
+			OperationMode mode,
+			bool allowEnvironmentWithFilter,
+			ISet<string> extraDeny,
+			ISet<string> extraAllow,
+			out EligibilityRejectReason reason)
+		{
+			if (!PassesDenyAllow(target, extraDeny, extraAllow, out reason))
 			{
 				return false;
 			}
 
-			if (target.Kind == TargetKind.Environment)
+			if (mode == OperationMode.MassDismantle)
+			{
+				if (!PassesHardSafety(target, out reason))
+				{
+					return false;
+				}
+
+				if (target.Kind != TargetKind.BuildPiece)
+				{
+					reason = target.Kind == TargetKind.Environment
+						? EligibilityRejectReason.EnvironmentWithoutFilter
+						: EligibilityRejectReason.UnsupportedType;
+					return false;
+				}
+
+				return PassesBuildPieceRemovability(target, out reason);
+			}
+
+			// Mass Delete commit: Environment or sampled Unsupported world objects (queued via filter).
+			if (target.Kind == TargetKind.Environment || target.Kind == TargetKind.Unsupported)
 			{
 				if (!allowEnvironmentWithFilter)
 				{
@@ -111,11 +195,17 @@ namespace Dismantleheim.Core
 					return false;
 				}
 
+				reason = EligibilityRejectReason.None;
 				return true;
 			}
 
 			if (target.Kind == TargetKind.BuildPiece)
 			{
+				if (!PassesHardSafety(target, out reason))
+				{
+					return false;
+				}
+
 				return PassesBuildPieceRemovability(target, out reason);
 			}
 
@@ -123,7 +213,7 @@ namespace Dismantleheim.Core
 			return false;
 		}
 
-		private static bool PassesHardSafety(
+		private static bool PassesDenyAllow(
 			TargetIdentity target,
 			ISet<string> extraDeny,
 			ISet<string> extraAllow,
@@ -151,13 +241,21 @@ namespace Dismantleheim.Core
 				return false;
 			}
 
+			return true;
+		}
+
+		private static bool PassesHardSafety(TargetIdentity target, out EligibilityRejectReason reason)
+		{
+			reason = EligibilityRejectReason.None;
+
 			if (target.Kind == TargetKind.Unsupported)
 			{
 				reason = EligibilityRejectReason.UnsupportedType;
 				return false;
 			}
 
-			if (!target.HasScopePreview)
+			// Build pieces need WearNTear preview. Environment may not have it.
+			if (!target.HasScopePreview && target.Kind != TargetKind.Environment)
 			{
 				reason = EligibilityRejectReason.NoScopePreview;
 				return false;
@@ -188,8 +286,7 @@ namespace Dismantleheim.Core
 		{
 			if (isEnvironment)
 			{
-				// Environment without a whole-object preview path is unsupported (H08/H23).
-				return hasScopePreview ? TargetKind.Environment : TargetKind.Unsupported;
+				return TargetKind.Environment;
 			}
 
 			if (hasPiece)
@@ -208,12 +305,12 @@ namespace Dismantleheim.Core
 				return set;
 			}
 
-			foreach (string part in csv.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+			foreach (string part in csv.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
 			{
-				string trimmed = part.Trim();
-				if (trimmed.Length > 0)
+				string t = part.Trim();
+				if (t.Length > 0)
 				{
-					set.Add(trimmed);
+					set.Add(t);
 				}
 			}
 

@@ -33,11 +33,16 @@ namespace Dismantleheim.Input
 			// Ownership / world epoch must run even while menus steal selection input.
 			ToolIdentityTracker.Tick(session);
 
-			bool menuOrFocus = ConsoleIsOpen() || ChatIsOpen() || TextInputFocused()
-			                   || InventoryGui.IsVisible() || MenuIsOpen() || PieceSelectionVisible()
+			// NOTE: Do NOT treat Hud.IsPieceSelectionVisible() as a hard input block while active.
+			// Holding Ctrl (Satisfactory paint) / picking an IH instant tool often keeps the piece
+			// HUD flagged visible; blocking Cancel()'d paint and hid cursor HUD under that panel.
+			// Also skip GUIUtility.keyboardControl — our own OnGUI labels false-trigger it.
+			// Piece changes still deactivate via ToolIdentityTracker when the table is used.
+			bool menuOrFocus = ConsoleIsOpen() || ChatIsOpen()
+			                   || InventoryGui.IsVisible() || MenuIsOpen()
 			                   || !Application.isFocused;
 
-			bool mouse3 = ZInput.GetMouseButton(2);
+			bool mouse3 = MouseButtons.Get(2);
 			bool mouse3Down = mouse3 && !_mouse3WasDown;
 			bool mouse3Up = !mouse3 && _mouse3WasDown;
 			_mouse3WasDown = mouse3;
@@ -83,10 +88,24 @@ namespace Dismantleheim.Input
 					session.StateMachine.TryTransition(DismantleTransition.CancelHold, session.Queue.Count, out _);
 				}
 
+				DragBoxSelector.Cancel();
+
+				if (session.IsActive && MouseButtons.GetDown(0))
+				{
+					string why = ConsoleIsOpen() ? "console"
+						: ChatIsOpen() ? "chat"
+						: InventoryGui.IsVisible() ? "inventory"
+						: MenuIsOpen() ? "menu"
+						: !Application.isFocused ? "unfocused"
+						: "ui";
+					DismantleheimPlugin.ModLogger?.LogInfo(
+						"Dismantleheim click blocked by UI focus (" + why + ")");
+				}
+
 				return;
 			}
 
-			if (ZInput.GetButtonDown(DismantleheimPlugin.ActivateButtonName))
+			if (DismantleheimPlugin.WasActivatePressed())
 			{
 				if (!DismantleheimPlugin.PatchesReady)
 				{
@@ -122,7 +141,7 @@ namespace Dismantleheim.Input
 				session.LastRejectReason = reject;
 			}
 
-			// Shift + Mouse3: cancel any hold first, then sample (never confirmation).
+			// Shift + Mouse3: sample prefab filter (never confirmation). Vanilla CopyPiece is suppressed.
 			if (shift && mouse3Down)
 			{
 				if (session.ConfirmHold.IsHolding)
@@ -133,12 +152,7 @@ namespace Dismantleheim.Input
 				}
 
 				_shiftSampleLatch = true;
-				string prefab = session.HoverTarget != null ? session.HoverTarget.PrefabName : null;
-				if (session.Sampler.TrySample(prefab, out string filter))
-				{
-					DismantleheimPlugin.DebugLog("Prefab filter → " + (filter ?? "(cleared)"));
-				}
-
+				ApplyPrefabSample(session);
 				return;
 			}
 
@@ -156,7 +170,7 @@ namespace Dismantleheim.Input
 					_shiftSampleLatch = false;
 				}
 
-				TryLeftClickSelect(session);
+				TryLeftClickSelect(session, ctrl: false);
 				return;
 			}
 
@@ -169,9 +183,22 @@ namespace Dismantleheim.Input
 			bool holding = session.StateMachine.State == DismantleState.HoldingConfirm
 			               || session.ConfirmHold.IsHolding;
 
-			if (!holding)
+			bool ctrl = UnityEngine.Input.GetKey(KeyCode.LeftControl)
+			            || UnityEngine.Input.GetKey(KeyCode.RightControl)
+			            || UnityEngine.Input.GetKey(KeyCode.LeftCommand)
+			            || UnityEngine.Input.GetKey(KeyCode.RightCommand);
+
+			// Plain LMB = click-add only. Ctrl+wave / Ctrl+LMB drag = paint (DragBoxSelector).
+			// Ctrl+click unselect is owned by DragBoxSelector on mouse-up if the press never painted.
+			if (!holding && !ctrl)
 			{
-				TryLeftClickSelect(session);
+				TryLeftClickSelect(session, ctrl: false);
+			}
+
+			DragBoxSelector.Tick(session);
+			if (DragBoxSelector.BlocksConfirm)
+			{
+				return;
 			}
 
 			if (_needsPhysicalMouse3Up)
@@ -213,36 +240,150 @@ namespace Dismantleheim.Input
 			}
 		}
 
-		private static void TryLeftClickSelect(DismantleSession session)
+		private static void ApplyPrefabSample(DismantleSession session)
 		{
-			if (!ZInput.GetMouseButtonDown(0))
+			// Prefer fresh aim ray so trees/rocks (no Piece hover) can be sampled for Mass Delete.
+			TargetIdentity sampleTarget = null;
+			if (TargetResolver.TryResolveAim(Player.m_localPlayer, out TargetIdentity aim, out string aimReject))
+			{
+				sampleTarget = aim;
+				session.HoverTarget = aim;
+				session.LastRejectReason = null;
+			}
+			else if (session.HoverTarget != null)
+			{
+				sampleTarget = session.HoverTarget;
+			}
+			else
+			{
+				session.LastRejectReason = "sample-no-aim " + (aimReject ?? "");
+			}
+
+			string prefab = sampleTarget != null ? sampleTarget.PrefabName : null;
+			if (string.IsNullOrWhiteSpace(prefab))
+			{
+				if (session.Sampler.HasFilter)
+				{
+					session.Sampler.Clear();
+					Announce("Prefab filter cleared (no hover)");
+				}
+				else
+				{
+					Announce("Shift+Mouse3: aim at a piece/tree/rock to sample (" + (aimReject ?? "no-hover") + ")");
+				}
+
+				return;
+			}
+
+			if (!session.Sampler.TrySample(prefab, out string filter))
+			{
+				Announce("Prefab sample failed");
+				return;
+			}
+
+			// Non-build samples are Mass Delete only — switch so the filter is immediately usable.
+			if (filter != null
+			    && sampleTarget.Kind != TargetKind.BuildPiece
+			    && session.ActiveMode == OperationMode.MassDismantle)
+			{
+				session.SetMode(OperationMode.MassDelete, "sample-world-object");
+			}
+
+			string kind = sampleTarget.Kind.ToString();
+			if (filter == null)
+			{
+				Announce("Prefab filter cleared");
+			}
+			else if (sampleTarget.Kind != TargetKind.BuildPiece)
+			{
+				Announce(
+					"Prefab filter → " + filter + " [" + kind + "] — Mass Delete (exact match selectable)");
+			}
+			else
+			{
+				Announce("Prefab filter → " + filter + " [" + kind + "]");
+			}
+		}
+
+		private static void TryLeftClickSelect(DismantleSession session, bool ctrl)
+		{
+			if (!MouseButtons.GetDown(0))
+			{
+				return;
+			}
+
+			// Ctrl+click is handled in DragBoxSelector (paint vs discrete unselect).
+			if (ctrl)
 			{
 				return;
 			}
 
 			TargetIdentity target = session.HoverTarget;
+			if (target == null
+			    && TargetResolver.TryResolveAim(Player.m_localPlayer, out TargetIdentity aim, out _))
+			{
+				target = aim;
+				session.HoverTarget = aim;
+			}
+
 			if (target == null)
 			{
+				session.LastRejectReason = "click-no-hover " + (session.LastRejectReason ?? "");
+				DismantleheimPlugin.ModLogger?.LogInfo("Dismantleheim click ignored: no hover target");
 				return;
 			}
 
 			if (!Eligibility.IsEligible(
 				    target,
+				    session.ActiveMode,
 				    session.Sampler.ActiveFilter,
 				    session.AllowEnvWithFilter,
 				    session.ExtraDeny(),
 				    session.ExtraAllow(),
 				    out EligibilityRejectReason reason))
 			{
-				session.LastRejectReason = reason + " prefab=" + target.PrefabName + " kind=" + target.Kind;
-				DismantleheimPlugin.DebugLog("Reject select: " + session.LastRejectReason);
+				session.LastRejectReason = reason + " mode=" + session.ActiveMode
+				                           + " prefab=" + target.PrefabName + " kind=" + target.Kind;
+				DismantleheimPlugin.ModLogger?.LogInfo("Dismantleheim Reject select: " + session.LastRejectReason);
 				return;
 			}
 
-			bool nowIn = session.Queue.Toggle(target);
+			int before = session.Queue.Count;
+			bool added = session.Queue.TryAdd(target, session.MaximumTargets);
+			if (!added)
+			{
+				if (session.Queue.Contains(target))
+				{
+					// Already selected — plain click does not unselect.
+					return;
+				}
+
+				if (before >= session.MaximumTargets)
+				{
+					session.LastRejectReason = "max-targets=" + session.MaximumTargets;
+					DismantleheimPlugin.ModLogger?.LogInfo("Dismantleheim Reject select: " + session.LastRejectReason);
+				}
+
+				return;
+			}
+
 			session.SyncStateAfterSelectionChange();
-			DismantleheimPlugin.DebugLog((nowIn ? "Queued " : "Unqueued ") + target.PrefabName + "#" + target.NetworkId
-			                            + " count=" + session.Queue.Count);
+			Announce("Queued " + target.PrefabName + "  (" + session.Queue.Count + " selected)");
+		}
+
+		private static void Announce(string msg)
+		{
+			DismantleheimPlugin.ModLogger?.LogInfo("Dismantleheim " + msg);
+			if (Console.instance != null)
+			{
+				Console.instance.Print("Dismantleheim " + msg);
+			}
+
+			Player player = Player.m_localPlayer;
+			if ((Object)(object)player != (Object)null)
+			{
+				player.Message(MessageHud.MessageType.TopLeft, msg);
+			}
 		}
 
 		private static bool ConsoleIsOpen()
@@ -255,26 +396,9 @@ namespace Dismantleheim.Input
 			return Chat.instance != null && Chat.instance.HasFocus();
 		}
 
-		private static bool TextInputFocused()
-		{
-			return GUIUtility.keyboardControl != 0;
-		}
-
 		private static bool MenuIsOpen()
 		{
 			return Menu.IsVisible();
-		}
-
-		private static bool PieceSelectionVisible()
-		{
-			try
-			{
-				return Hud.IsPieceSelectionVisible();
-			}
-			catch
-			{
-				return false;
-			}
 		}
 	}
 }

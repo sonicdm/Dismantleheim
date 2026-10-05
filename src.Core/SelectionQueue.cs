@@ -36,8 +36,9 @@ namespace Dismantleheim.Core
 
 		/// <summary>
 		/// Toggle membership. Returns true if now present, false if removed/absent.
+		/// When adding, respects maxCount (0 = unlimited).
 		/// </summary>
-		public bool Toggle(TargetIdentity identity)
+		public bool Toggle(TargetIdentity identity, int maxCount = 0)
 		{
 			if (identity == null)
 			{
@@ -53,8 +54,48 @@ namespace Dismantleheim.Core
 				}
 			}
 
+			return TryAdd(identity, maxCount);
+		}
+
+		/// <summary>
+		/// Add if absent. Returns true if newly added. Does not remove existing entries.
+		/// </summary>
+		public bool TryAdd(TargetIdentity identity, int maxCount = 0)
+		{
+			if (identity == null || Contains(identity))
+			{
+				return false;
+			}
+
+			if (maxCount > 0 && _entries.Count >= maxCount)
+			{
+				return false;
+			}
+
 			_entries.Add(identity);
 			return true;
+		}
+
+		/// <summary>
+		/// Remove if present. Returns true if an entry was removed.
+		/// </summary>
+		public bool TryRemove(TargetIdentity identity)
+		{
+			if (identity == null)
+			{
+				return false;
+			}
+
+			for (int i = 0; i < _entries.Count; i++)
+			{
+				if (_entries[i].Equals(identity))
+				{
+					_entries.RemoveAt(i);
+					return true;
+				}
+			}
+
+			return false;
 		}
 
 		public void Clear()

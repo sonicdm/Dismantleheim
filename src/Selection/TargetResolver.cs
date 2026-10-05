@@ -1,5 +1,7 @@
 using System;
+using System.Reflection;
 using Dismantleheim.Core;
+using HarmonyLib;
 using UnityEngine;
 using UObject = UnityEngine.Object;
 
@@ -7,6 +9,11 @@ namespace Dismantleheim.Selection
 {
 	internal static class TargetResolver
 	{
+		private static readonly FieldInfo RemoveRayMaskField =
+			AccessTools.Field(typeof(Player), "m_removeRayMask");
+		private static readonly FieldInfo MaxPlaceDistanceField =
+			AccessTools.Field(typeof(Player), "m_maxPlaceDistance");
+
 		/// <summary>
 		/// World UID + peer/session epoch so reconnects do not reuse prior queue identities.
 		/// </summary>
@@ -32,14 +39,136 @@ namespace Dismantleheim.Selection
 				return false;
 			}
 
-			GameObject hover = player.GetHoverObject();
+			// Build pieces: GetHoveringPiece. Environment (trees/rocks): often not a Piece — aim ray.
+			GameObject hover = null;
+			if (player.InPlaceMode())
+			{
+				Piece hoveringPiece = player.GetHoveringPiece();
+				if ((UObject)(object)hoveringPiece != (UObject)null)
+				{
+					hover = hoveringPiece.gameObject;
+				}
+			}
+
 			if ((UObject)(object)hover == (UObject)null)
 			{
-				rejectDetail = "no-hover";
+				hover = player.GetHoverObject();
+			}
+
+			if ((UObject)(object)hover != (UObject)null && !Player.IsPlacementGhost(hover)
+			    && TryResolveObject(hover, out identity, out rejectDetail)
+			    && identity != null
+			    && identity.Kind != TargetKind.Unsupported)
+			{
+				return true;
+			}
+
+			// Trees/rocks / missed Piece hover: fresh remove-mask ray including environment roots.
+			return TryResolveAim(player, out identity, out rejectDetail);
+		}
+
+		/// <summary>
+		/// Fresh camera ray (Player remove mask). Resolves build Pieces and environment roots
+		/// (TreeBase / MineRock / …) so Shift+M3 sample and Ctrl-paint work on sampled env targets.
+		/// </summary>
+		public static bool TryResolveAim(Player player, out TargetIdentity identity, out string rejectDetail)
+		{
+			identity = null;
+			rejectDetail = null;
+			if ((UObject)(object)player == (UObject)null)
+			{
+				rejectDetail = "no-player";
 				return false;
 			}
 
-			return TryResolveObject(hover, out identity, out rejectDetail);
+			if ((UObject)(object)GameCamera.instance == (UObject)null)
+			{
+				rejectDetail = "no-camera";
+				return false;
+			}
+
+			Transform cam = GameCamera.instance.transform;
+			int mask = RemoveRayMaskField != null ? (int)RemoveRayMaskField.GetValue(player) : 0;
+			float maxDist = MaxPlaceDistanceField != null
+				? (float)MaxPlaceDistanceField.GetValue(player)
+				: 5f;
+
+			if (!Physics.Raycast(cam.position, cam.forward, out RaycastHit hit, 50f, mask))
+			{
+				rejectDetail = "aim-miss";
+				return false;
+			}
+
+			if ((UObject)(object)player.m_eye != (UObject)null)
+			{
+				float eyeDist = Vector3.Distance(player.m_eye.position, hit.point);
+				if (eyeDist >= maxDist)
+				{
+					rejectDetail = "aim-range";
+					return false;
+				}
+			}
+
+			GameObject root = ResolveRootFromCollider(hit.collider);
+			if ((UObject)(object)root == (UObject)null)
+			{
+				rejectDetail = "aim-no-target";
+				return false;
+			}
+
+			if (Player.IsPlacementGhost(root))
+			{
+				rejectDetail = "placement-ghost";
+				return false;
+			}
+
+			return TryResolveObject(root, out identity, out rejectDetail);
+		}
+
+		private static GameObject ResolveRootFromCollider(Collider col)
+		{
+			if ((UObject)(object)col == (UObject)null)
+			{
+				return null;
+			}
+
+			ZNetView view = col.GetComponentInParent<ZNetView>();
+			if ((UObject)(object)view != (UObject)null && view.IsValid())
+			{
+				return view.gameObject;
+			}
+
+			Piece piece = col.GetComponentInParent<Piece>();
+			if ((UObject)(object)piece != (UObject)null)
+			{
+				return piece.gameObject;
+			}
+
+			TreeBase tree = col.GetComponentInParent<TreeBase>();
+			if ((UObject)(object)tree != (UObject)null)
+			{
+				return tree.gameObject;
+			}
+
+			TreeLog log = col.GetComponentInParent<TreeLog>();
+			if ((UObject)(object)log != (UObject)null)
+			{
+				return log.gameObject;
+			}
+
+			MineRock rock = col.GetComponentInParent<MineRock>();
+			if ((UObject)(object)rock != (UObject)null)
+			{
+				return rock.gameObject;
+			}
+
+			MineRock5 rock5 = col.GetComponentInParent<MineRock5>();
+			if ((UObject)(object)rock5 != (UObject)null)
+			{
+				return rock5.gameObject;
+			}
+
+			return null;
 		}
 
 		public static bool TryResolveObject(GameObject go, out TargetIdentity identity, out string rejectDetail)
@@ -61,11 +190,22 @@ namespace Dismantleheim.Selection
 
 			GameObject root = view.gameObject;
 			Piece piece = root.GetComponent<Piece>();
+			if ((UObject)(object)piece == (UObject)null)
+			{
+				piece = root.GetComponentInChildren<Piece>();
+			}
+
 			bool hasPiece = (UObject)(object)piece != (UObject)null;
 			bool canRemove = hasPiece && piece.m_canBeRemoved;
 			bool isEnvironment = IsEnvironmentRoot(root);
 			WearNTear wear = root.GetComponent<WearNTear>();
-			bool hasScopePreview = (UObject)(object)wear != (UObject)null;
+			if ((UObject)(object)wear == (UObject)null)
+			{
+				wear = root.GetComponentInChildren<WearNTear>();
+			}
+
+			// Trees often lack WearNTear; Mass Delete + sample still allows them (highlight best-effort).
+			bool hasScopePreview = (UObject)(object)wear != (UObject)null || isEnvironment;
 			TargetKind kind = Eligibility.Classify(hasPiece, canRemove, isEnvironment, hasScopePreview);
 
 			if (!hasPiece && !isEnvironment)
@@ -73,14 +213,16 @@ namespace Dismantleheim.Selection
 				kind = TargetKind.Unsupported;
 			}
 
-			// Environment without WearNTear cannot show whole-object highlight — unsupported.
-			if (isEnvironment && !hasScopePreview)
+			string prefab = NormalizePrefabName(root.name ?? string.Empty);
+
+			// Name-based fallback when components sit oddly (Rock_3, prop_*, etc.).
+			if (!isEnvironment && LooksLikeEnvironmentPrefab(prefab))
 			{
-				kind = TargetKind.Unsupported;
-				rejectDetail = "env-no-scope-preview";
+				isEnvironment = true;
+				hasScopePreview = true;
+				kind = TargetKind.Environment;
 			}
 
-			string prefab = StripClone(root.name ?? string.Empty);
 			string session = CurrentWorldSessionKey();
 
 			long userId = 0;
@@ -151,7 +293,8 @@ namespace Dismantleheim.Selection
 				return false;
 			}
 
-			if (!live.HasScopePreview)
+			// Environment/props may lack WearNTear; commit still allowed for Mass Delete.
+			if (!live.HasScopePreview && live.Kind != TargetKind.Environment)
 			{
 				detail = "no-scope-preview";
 				live = null;
@@ -168,22 +311,54 @@ namespace Dismantleheim.Selection
 				return false;
 			}
 
-			if ((UObject)(object)root.GetComponent<TreeBase>() != (UObject)null)
+			// Components may sit on children of the ZNetView root (e.g. Birch2 / prop_*).
+			if ((UObject)(object)root.GetComponentInChildren<TreeBase>(true) != (UObject)null)
 			{
 				return true;
 			}
 
-			if ((UObject)(object)root.GetComponent<TreeLog>() != (UObject)null)
+			if ((UObject)(object)root.GetComponentInChildren<TreeLog>(true) != (UObject)null)
 			{
 				return true;
 			}
 
-			if ((UObject)(object)root.GetComponent<MineRock>() != (UObject)null)
+			if ((UObject)(object)root.GetComponentInChildren<MineRock>(true) != (UObject)null)
 			{
 				return true;
 			}
 
-			if ((UObject)(object)root.GetComponent<MineRock5>() != (UObject)null)
+			if ((UObject)(object)root.GetComponentInChildren<MineRock5>(true) != (UObject)null)
+			{
+				return true;
+			}
+
+			// World props (prop_ashwood_bed, rubble, …): Destructible, usually no Piece.
+			if ((UObject)(object)root.GetComponentInChildren<Destructible>(true) != (UObject)null)
+			{
+				return true;
+			}
+
+			return LooksLikeEnvironmentPrefab(NormalizePrefabName(root.name ?? string.Empty));
+		}
+
+		public static bool LooksLikeEnvironmentPrefab(string prefab)
+		{
+			if (string.IsNullOrEmpty(prefab))
+			{
+				return false;
+			}
+
+			if (prefab.StartsWith("prop_", StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+
+			// Common world rocks / debris without a stable component layout on the ZNetView root.
+			if (prefab.StartsWith("Rock_", StringComparison.OrdinalIgnoreCase)
+			    || prefab.StartsWith("rock_", StringComparison.OrdinalIgnoreCase)
+			    || prefab.StartsWith("MineRock", StringComparison.OrdinalIgnoreCase)
+			    || prefab.StartsWith("stone_environment", StringComparison.OrdinalIgnoreCase)
+			    || prefab.StartsWith("Cliff", StringComparison.OrdinalIgnoreCase))
 			{
 				return true;
 			}
@@ -193,13 +368,48 @@ namespace Dismantleheim.Selection
 
 		public static string StripClone(string prefab)
 		{
-			const string clone = "(Clone)";
-			if (!string.IsNullOrEmpty(prefab) && prefab.EndsWith(clone))
+			return NormalizePrefabName(prefab);
+		}
+
+		/// <summary>
+		/// Prefab identity for filters: strip "(Clone)" and Unity instance suffixes like " (1)".
+		/// </summary>
+		public static string NormalizePrefabName(string prefab)
+		{
+			if (string.IsNullOrEmpty(prefab))
 			{
-				return prefab.Substring(0, prefab.Length - clone.Length).Trim();
+				return string.Empty;
 			}
 
-			return prefab ?? string.Empty;
+			string name = prefab.Trim();
+			const string clone = "(Clone)";
+			if (name.EndsWith(clone, StringComparison.Ordinal))
+			{
+				name = name.Substring(0, name.Length - clone.Length).TrimEnd();
+			}
+
+			// "iron_wall_2x2 (12)" → "iron_wall_2x2"
+			int open = name.LastIndexOf('(');
+			int close = name.LastIndexOf(')');
+			if (open > 0 && close == name.Length - 1 && close > open + 1)
+			{
+				bool digits = true;
+				for (int i = open + 1; i < close; i++)
+				{
+					if (!char.IsDigit(name[i]))
+					{
+						digits = false;
+						break;
+					}
+				}
+
+				if (digits)
+				{
+					name = name.Substring(0, open).TrimEnd();
+				}
+			}
+
+			return name;
 		}
 	}
 }

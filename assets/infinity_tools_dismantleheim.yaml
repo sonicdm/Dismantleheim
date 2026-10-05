@@ -1,13 +1,20 @@
-# dismantleheim-tool-v2 — owned by Dismantleheim; safe to delete on uninstall
+# dismantleheim-tool-v9 — owned by Dismantleheim; safe to delete on uninstall
 hammer:
-- name: Dismantleheim
+- name: Dismantleheim - Mass Dismantle
   description: |-
-    Queued dismantle mode.
-    Left-click to flag pieces.
-    Shift+Mouse3 samples prefab filter.
-    Hold Mouse3 to confirm (dry-run by default).
-    ActivateKey (default Delete) also toggles.
+    Select built pieces, then hold Mouse3 to reclaim materials (vanilla refunds).
+    Hold Ctrl + wave aim to mass-select. Ctrl+click unselects one. Shift+Mouse3 samples.
+    Hold Mouse3 to confirm.
   icon: Hammer
   instant: true
-  command: dismantleheim activate
+  command: dismantleheim mode dismantle
+  tabIndex: 0
+- name: Dismantleheim - Mass Delete
+  description: |-
+    Select objects, then hold Mouse3 to erase without drops. Containers may destroy contents.
+    Hold Ctrl + wave aim to mass-select. Ctrl+click unselects one. Shift+Mouse3 samples.
+    Hold Mouse3 to confirm.
+  icon: Hammer
+  instant: true
+  command: dismantleheim mode delete
   tabIndex: 0

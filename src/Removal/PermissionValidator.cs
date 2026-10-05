@@ -8,6 +8,11 @@ namespace Dismantleheim.Removal
 	{
 		public static RemovalSkipReason Validate(TargetIdentity target, out string message)
 		{
+			return ValidateForMode(target, OperationMode.MassDismantle, out message);
+		}
+
+		public static RemovalSkipReason ValidateForMode(TargetIdentity target, OperationMode mode, out string message)
+		{
 			message = string.Empty;
 			if (target == null || target.IsStale)
 			{
@@ -27,13 +32,23 @@ namespace Dismantleheim.Removal
 				return RemovalSkipReason.WildcardRejected;
 			}
 
-			if (target.Kind == TargetKind.Unsupported)
+			bool sampledWorldObject = target.Kind == TargetKind.Environment
+			                          || target.Kind == TargetKind.Unsupported;
+
+			if (mode == OperationMode.MassDismantle && sampledWorldObject)
+			{
+				message = "environment/props not dismantleable (use Mass Delete + sample)";
+				return RemovalSkipReason.UnsupportedEnvironment;
+			}
+
+			if (target.Kind == TargetKind.Unsupported && mode != OperationMode.MassDelete)
 			{
 				message = "unsupported target kind";
 				return RemovalSkipReason.PermissionDenied;
 			}
 
-			if (!target.HasScopePreview)
+			// Sampled props/trees may lack WearNTear highlight scope.
+			if (!target.HasScopePreview && !sampledWorldObject)
 			{
 				message = "no whole-object preview scope";
 				return RemovalSkipReason.PermissionDenied;
@@ -53,17 +68,6 @@ namespace Dismantleheim.Removal
 				return RemovalSkipReason.Ward;
 			}
 
-			Container container = go.GetComponentInChildren<Container>();
-			if ((Object)(object)container != (Object)null)
-			{
-				Inventory inv = container.GetInventory();
-				if (inv != null && inv.NrOfItems() > 0)
-				{
-					message = "container has contents";
-					return RemovalSkipReason.ContainerWithContents;
-				}
-			}
-
 			TeleportWorld portal = go.GetComponent<TeleportWorld>();
 			if ((Object)(object)portal != (Object)null)
 			{
@@ -78,12 +82,12 @@ namespace Dismantleheim.Removal
 				return RemovalSkipReason.Ward;
 			}
 
-			if (target.Kind == TargetKind.Environment)
+			if (sampledWorldObject)
 			{
 				bool isServer = ZNet.instance != null && ZNet.instance.IsServer();
 				if (!isServer)
 				{
-					message = "environment requires host authority";
+					message = "environment/props require host authority";
 					return RemovalSkipReason.UnsupportedEnvironment;
 				}
 			}
@@ -98,10 +102,23 @@ namespace Dismantleheim.Removal
 					return RemovalSkipReason.PermissionDenied;
 				}
 
-				if ((Object)(object)player != (Object)null && !PlayerRemoveAccess.CanRemovePiece(player, piece))
+				// Crafting-station range is a Mass Dismantle (refund) rule only.
+				if (mode == OperationMode.MassDismantle
+				    && (Object)(object)player != (Object)null
+				    && !PlayerRemoveAccess.CanRemovePiece(player, piece))
 				{
-					message = "CheckCanRemovePiece=false";
+					message = "missing crafting station in range (vanilla)";
 					return RemovalSkipReason.PermissionDenied;
+				}
+
+				if (mode == OperationMode.MassDismantle && !piece.CanBeRemoved())
+				{
+					message = ContainerContentsInspector.VanillaOccupiedChestRefusal(go)
+						? "occupied container (vanilla)"
+						: "Piece.CanBeRemoved=false";
+					return ContainerContentsInspector.HasStoredItems(go, out _)
+						? RemovalSkipReason.ContainerWithContents
+						: RemovalSkipReason.PermissionDenied;
 				}
 			}
 			else if (target.Kind == TargetKind.BuildPiece)

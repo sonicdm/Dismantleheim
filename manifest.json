@@ -2,7 +2,7 @@
   "name": "Dismantleheim",
   "version_number": "0.1.0",
   "website_url": "https://github.com/sonicdm/Dismantleheim",
-  "description": "Satisfactory-inspired queued Hammer dismantle. Flag pieces, sample prefab filters, hold Mouse3 to confirm. Infinity Hammer Tools entry + Delete hotkey.",
+  "description": "Beta: queued Mass Dismantle (refunds) and Mass Delete (no drops). Ctrl-paint select, Shift+M3 filter, hold Mouse3 to confirm. Infinity Hammer Tools + Delete hotkey.",
   "author": "SonicDM",
   "dependencies": [
     "denikson-BepInExPack_Valheim-5.4.2202",

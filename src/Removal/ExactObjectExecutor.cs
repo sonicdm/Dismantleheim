@@ -6,88 +6,113 @@ namespace Dismantleheim.Removal
 {
 	internal static class ExactObjectExecutor
 	{
-		public static List<RemovalResult> Execute(RemovalPlan plan, List<TargetIdentity> preSkipped)
+		public static List<RemovalResult> Execute(OperationMode mode, List<RemovalPlanEntry> plan)
 		{
 			var results = new List<RemovalResult>();
-			if (preSkipped != null)
-			{
-				foreach (TargetIdentity s in preSkipped)
-				{
-					results.Add(new RemovalResult(s, false, RemovalSkipReason.Stale, "pre-validation skip"));
-				}
-			}
-
 			bool dry = DismantleheimPlugin.DryRunOnly == null || DismantleheimPlugin.DryRunOnly.Value;
 			if (plan == null)
 			{
 				return results;
 			}
 
-			foreach (TargetIdentity target in plan.Targets)
+			foreach (RemovalPlanEntry entry in plan)
 			{
-				RemovalSkipReason reason = PermissionValidator.Validate(target, out string message);
-				if (reason != RemovalSkipReason.None)
+				if (entry == null || entry.Target == null)
 				{
-					results.Add(new RemovalResult(target, false, reason, message));
+					continue;
+				}
+
+				if (entry.SkipReason != RemovalSkipReason.None)
+				{
+					results.Add(new RemovalResult(
+						entry.Target,
+						false,
+						entry.SkipReason,
+						entry.Message,
+						entry.DropPolicy,
+						mode));
 					continue;
 				}
 
 				if (dry)
 				{
-					results.Add(new RemovalResult(target, false, RemovalSkipReason.DryRun, "dry-run plan member"));
+					results.Add(new RemovalResult(
+						entry.Target,
+						false,
+						RemovalSkipReason.DryRun,
+						"dry-run " + entry.Message,
+						entry.DropPolicy,
+						mode));
 					continue;
 				}
 
-				bool ok = TryRemoveAuthorized(target, out string err);
-				results.Add(ok
-					? new RemovalResult(target, true, RemovalSkipReason.None, "removed")
-					: new RemovalResult(target, false, RemovalSkipReason.PermissionDenied, err));
+				bool requested;
+				string err;
+				try
+				{
+					if (mode == OperationMode.MassDismantle)
+					{
+						requested = VanillaPieceRemovalAdapter.TryRemove(entry.Target, out err);
+					}
+					else
+					{
+						requested = AuthorizedExactDeletionAdapter.TryDelete(entry.Target, out err);
+					}
+				}
+				catch (System.Exception ex)
+				{
+					results.Add(new RemovalResult(
+						entry.Target,
+						false,
+						RemovalSkipReason.PermissionDenied,
+						"adapter exception: " + ex.Message,
+						DropPolicy.None,
+						mode));
+					DismantleheimPlugin.ModLogger?.LogWarning(
+						"Dismantleheim remove exception on " + entry.Target.PrefabName + ": " + ex.Message);
+					continue;
+				}
+
+				if (!requested)
+				{
+					results.Add(new RemovalResult(
+						entry.Target,
+						false,
+						err != null && err.StartsWith("Unsafe")
+							? RemovalSkipReason.UnsafeDelete
+							: RemovalSkipReason.PermissionDenied,
+						err,
+						DropPolicy.None,
+						mode));
+					continue;
+				}
+
+				// Only report Removed when the instance is already gone (synchronous confirm).
+				// Async RPC leave PendingNetwork — queue is not cleared for those.
+				GameObject after = ResolveInstance(entry.Target);
+				if ((Object)(object)after == (Object)null)
+				{
+					results.Add(new RemovalResult(
+						entry.Target,
+						true,
+						RemovalSkipReason.None,
+						"instance cleared",
+						entry.DropPolicy,
+						mode));
+				}
+				else
+				{
+					results.Add(new RemovalResult(
+						entry.Target,
+						false,
+						RemovalSkipReason.PendingNetwork,
+						"destroy requested; instance still present",
+						entry.DropPolicy,
+						mode));
+				}
 			}
 
 			return results;
-		}
-
-		/// <summary>
-		/// Authorized exact remove: re-check Player.CheckCanRemovePiece, then WearNTear.Remove
-		/// (network destroy path used by hammer remove). Does not claim Player.RemovePiece() was called.
-		/// </summary>
-		private static bool TryRemoveAuthorized(TargetIdentity target, out string error)
-		{
-			error = string.Empty;
-			GameObject go = ResolveInstance(target);
-			if ((Object)(object)go == (Object)null)
-			{
-				error = "instance not found at commit";
-				return false;
-			}
-
-			Player player = Player.m_localPlayer;
-			Piece piece = go.GetComponent<Piece>();
-			if ((Object)(object)piece != (Object)null)
-			{
-				if ((Object)(object)player == (Object)null || !PlayerRemoveAccess.CanRemovePiece(player, piece))
-				{
-					error = "CheckCanRemovePiece failed at commit";
-					return false;
-				}
-			}
-			else if (target.Kind != TargetKind.Environment)
-			{
-				error = "not a supported piece/environment";
-				return false;
-			}
-
-			WearNTear wear = go.GetComponent<WearNTear>();
-			if ((Object)(object)wear == (Object)null)
-			{
-				// No preview-capable destroy path — refuse (no generic Destroy fallback).
-				error = "no WearNTear scope; refused";
-				return false;
-			}
-
-			wear.Remove();
-			// Network destroy may complete asynchronously; observer/server confirmation is an acceptance gate.
-			return true;
 		}
 
 		internal static GameObject ResolveInstance(TargetIdentity target)

@@ -1,33 +1,56 @@
-# Removal authority (0.1 → 0.2)
+# Removal authority (dual-mode)
 
-## Dry-run (0.1 default)
+Observed against `assembly_valheim.dll` in workspace `Reqs` (spike for Phase E). Defaults: `Removal.DryRunOnly = true` — no world mutation until Gate B/C.
 
-`Removal.DryRunOnly = true` logs an immutable `RemovalPlan` of exact network identities (world UID session + ZDO UserId/ObjectId + prefab/kind). No destroy calls are invoked.
+## Spike: `Player.RemovePiece` (managed IL)
 
-## Building pieces (when DryRunOnly = false)
+Vanilla Mouse3 remove (simplified):
 
-Each target is revalidated at commit (session, prefab, kind, instance). Then:
+1. Camera ray → `Piece` (or terrain modifier piece).
+2. `PrivateArea.CheckAccess(pos, 0, flash:true, wardCheck:false)`.
+3. `Player.CheckCanRemovePiece(piece)` — crafting-station range / global-key gates (private method).
+4. `Piece.CanBeRemoved()` — **not** only `m_canBeRemoved`:
+   - `Container.CanBeRemoved()`: public chests with `Inventory.NrOfItems() > 0` return **false** (vanilla occupied-chest refusal).
+   - Ships have their own `CanBeRemoved`.
+5. Optional `IRemoved.OnRemoved()`.
+6. `WearNTear.Remove(bool)` → `ZNetView.InvokeRPC("RPC_Remove", bool)` (network destroy).
+7. **`Piece.DropResources(HitData)`** — construction refunds (separate from WearNTear).
+8. Place effects; fallback `ZNetScene.Destroy` in some branches.
 
-1. `PrivateArea.CheckAccess` at the object position (ward/private area).
-2. Container-contents / portal / ward-object rejects.
-3. `Piece.m_canBeRemoved` and `Player.CheckCanRemovePiece`.
-4. Destroy via **`WearNTear.Remove()`** on the exact network root (same network destroy path hammer remove uses). This is **not** a call to `Player.RemovePiece()` — that method is suppressed while Dismantleheim owns input so confirmation does not race vanilla Mouse3 remove.
+Implication: calling `WearNTear.Remove` alone does **not** refund materials. Mass Dismantle must invoke the refund step (or the full native path). Mass Delete must invoke destroy **without** `DropResources` and without harvest callbacks.
 
-Skips with logged reasons when any gate fails. `Removed=true` is reported only after the destroy call returns; missing instances stay skipped.
+## Modes
 
-## Environment (rocks / trees)
+### Mass Dismantle
 
-Allowed into the **queue** only with an explicit prefab sample filter (and only recognized `TreeBase` / `TreeLog` / `MineRock` / `MineRock5` roots). Real deletion requires the client to be the server (listen host) and still uses WearNTear.Remove when present, else host-only `ZNetScene.Destroy`. Dedicated vanilla servers without host authority are **not** promised.
+- Targets: removable **build pieces** only. Environment never eligible (filter does not unlock harvest).
+- Live path: ward access → `CheckCanRemovePiece` → `Piece.CanBeRemoved()` → `WearNTear.Remove(false)` → `Piece.DropResources(null)` once. Never spawn extra recipe drops.
+- Occupied ordinary chests: skip when `Piece.CanBeRemoved()` is false (matches vanilla).
+
+### Mass Delete
+
+- Targets: build pieces; environment only with explicit prefab filter + `WearNTear` scope preview.
+- Live path: ward access → authorized exact delete via `WearNTear.Remove(false)` **without** `DropResources`. No chopping/mining loot.
+- Occupied containers: allowed after HUD contents-loss warning; not a categorical ban.
+- Unknown / no-preview / unsafe lifecycle → skip `Unsafe delete`.
+
+## Live outcome reporting
+
+`WearNTear.Remove` issues `RPC_Remove` and may complete asynchronously. Live execution only sets `Removed=true` when the instance is already gone after the call. If the instance remains, the result is `PendingNetwork` (logged as PENDING); the queue is not cleared for that target. Dry-run never claims removal.
+
+## Dry-run
+
+Logs per-object plan lines: mode, drop policy (`RefundsViaNative` / `NoDrops` / skip reason). No RPC / DropResources.
 
 ## Hard safety
 
-- `ExtraAllowPrefabs` only overrides `ExtraDenyPrefabs` — never type, removability, or environment-without-filter rules.
-- Unsupported / unknown networked objects are never eligible.
-- Wildcard / area descriptors are rejected in the plan builder.
+- Exact ZDO identities only; no `id=*` / area wipes.
+- `ExtraAllow` only overrides `ExtraDeny`.
+- Env without whole-object preview (`HasScopePreview`) rejected.
+- World UID + peer epoch; logout hard-resets queue.
 
-## Not supported
+## Not supported / not claimed
 
-- Wildcard / area remove commands
-- Refunds or undo
-- Guaranteed rock/tree wipe on unmodded dedicated hosts
-- Claiming observer sync beyond ordinary WearNTear network destroy behavior
+- Guaranteed env wipe on unmodded dedicated hosts.
+- Undo, fabricated harvest loot, double refunds.
+- Observer sync beyond ordinary WearNTear network destroy.

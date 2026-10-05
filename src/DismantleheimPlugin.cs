@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
+using System.Reflection;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
+using Dismantleheim.Core;
 using Dismantleheim.Install;
 using Dismantleheim.Integration;
 using Dismantleheim.Input;
@@ -17,6 +20,8 @@ namespace Dismantleheim
 {
 	[BepInPlugin(PluginGuid, PluginName, PluginVersion)]
 	[BepInDependency(Jotunn.Main.ModGuid)]
+	// Soft dep so Infinity Hammer Awake runs first when present (GUID from current IH releases).
+	[BepInDependency("infinity_hammer", BepInDependency.DependencyFlags.SoftDependency)]
 	[NetworkCompatibility(CompatibilityLevel.NotEnforced, VersionStrictness.None)]
 	public sealed class DismantleheimPlugin : BaseUnityPlugin
 	{
@@ -56,6 +61,20 @@ namespace Dismantleheim
 
 		internal static ConfigEntry<bool> DryRunOnly;
 
+		internal static ConfigEntry<string> DefaultMode;
+
+		internal static ConfigEntry<bool> ShowActiveMode;
+
+		internal static ConfigEntry<bool> PreserveSelectionOnModeSwitch;
+
+		internal static ConfigEntry<int> MaximumTargets;
+
+		internal static ConfigEntry<float> DragSelectRadius;
+
+		internal static ConfigEntry<bool> WarnWhenDeletingOccupiedContainers;
+
+		internal static ConfigEntry<bool> RefuseUnknownDeleteTargets;
+
 		internal static bool DebugEnabled => DebugLogging != null && DebugLogging.Value;
 
 		internal static DismantleSession Session { get; private set; }
@@ -68,6 +87,8 @@ namespace Dismantleheim
 		private ButtonConfig _activateButton;
 
 		private bool _clientSystemsStarted;
+
+		private bool _ihToolsInstallDone;
 
 		private void Awake()
 		{
@@ -83,14 +104,7 @@ namespace Dismantleheim
 				return;
 			}
 
-			_activateButton = new ButtonConfig
-			{
-				Name = ActivateButtonName,
-				Key = ActivateKey != null ? ActivateKey.Value : KeyCode.Delete,
-				ActiveInGUI = false,
-				ActiveInCustomGUI = false
-			};
-			InputManager.Instance.AddButton(PluginGuid, _activateButton);
+			RegisterActivateButton();
 			if (ActivateKey != null)
 			{
 				ActivateKey.SettingChanged += OnActivateKeyChanged;
@@ -101,20 +115,8 @@ namespace Dismantleheim
 				Enabled.SettingChanged += OnEnabledChanged;
 			}
 
-			bool ihPresent = InfinityHammerDetector.IsInstalled(out string ihGuid, out string ihVersion);
-			if (ihPresent)
-			{
-				Logger.LogInfo("Infinity Hammer detected (" + ihGuid + " " + ihVersion + ").");
-				if (InstallInfinityHammerTool != null && InstallInfinityHammerTool.Value)
-				{
-					YamlToolInstallerBridge.TryInstall(Logger);
-				}
-			}
-			else
-			{
-				Logger.LogInfo(
-					"Infinity Hammer not detected. Tools-menu entry unavailable; use ActivateKey (default Delete) or 'dismantleheim activate'.");
-			}
+			// Soft-dep usually means IH is already in PluginInfos; Start only retries if Awake missed it.
+			TryInstallInfinityHammerTools(forceRetry: false);
 
 			_harmony = new Harmony(PluginGuid);
 			try
@@ -139,6 +141,60 @@ namespace Dismantleheim
 			}
 		}
 
+		private void Start()
+		{
+			if (GUIManager.IsHeadless())
+			{
+				return;
+			}
+
+			if (!_ihToolsInstallDone)
+			{
+				TryInstallInfinityHammerTools(forceRetry: true);
+			}
+		}
+
+		private void TryInstallInfinityHammerTools(bool forceRetry)
+		{
+			if (InstallInfinityHammerTool == null || !InstallInfinityHammerTool.Value)
+			{
+				_ihToolsInstallDone = true;
+				return;
+			}
+
+			if (_ihToolsInstallDone && !forceRetry)
+			{
+				return;
+			}
+
+			bool ihPresent = InfinityHammerDetector.IsInstalled(out string ihGuid, out string ihVersion);
+			if (ihPresent)
+			{
+				Logger.LogInfo("Infinity Hammer detected (" + ihGuid + " " + ihVersion + ").");
+			}
+			else if (!forceRetry)
+			{
+				// Soft-dep miss / load order — retry once from Start after Chainloader finishes.
+				return;
+			}
+			else
+			{
+				Logger.LogInfo(
+					"Infinity Hammer not detected; writing owned tools YAML for next IH load. ActivateKey/console remain available.");
+			}
+
+			if (!YamlToolInstallerBridge.TryInstall(Logger, out string dest, out bool wrote))
+			{
+				return;
+			}
+
+			_ihToolsInstallDone = true;
+			Logger.LogInfo(
+				wrote
+					? "Dismantleheim: wrote owned IH tools file " + dest
+					: "Dismantleheim: owned IH tools file already current " + dest);
+		}
+
 		private void OnDestroy()
 		{
 			if (ActivateKey != null)
@@ -158,6 +214,8 @@ namespace Dismantleheim
 
 			HoverHighlighter.ClearAll();
 			ContextualInputRouter.ResetLatches();
+			DragBoxSelector.Cancel();
+			// Jotunn has no RemoveButton; leave Buttons entry so ScriptEngine reload can reuse it.
 
 			if (_harmony != null)
 			{
@@ -174,6 +232,79 @@ namespace Dismantleheim
 			}
 
 			PatchesReady = false;
+			_activateButton = null;
+			Logger.LogInfo(PluginName + " unloaded (ScriptEngine-safe).");
+		}
+
+		/// <summary>
+		/// Jötunn stores buttons for process lifetime and warns on duplicate AddButton after ScriptEngine reload.
+		/// Reuse the existing config when present; otherwise register once.
+		/// </summary>
+		private void RegisterActivateButton()
+		{
+			KeyCode key = ActivateKey != null ? ActivateKey.Value : KeyCode.Delete;
+			string storedKey = ActivateButtonName + "!" + PluginGuid;
+
+			try
+			{
+				FieldInfo buttonsField = AccessTools.Field(typeof(InputManager), "Buttons");
+				var buttons = buttonsField?.GetValue(null) as Dictionary<string, ButtonConfig>;
+				if (buttons != null && buttons.TryGetValue(storedKey, out ButtonConfig existing) && existing != null)
+				{
+					existing.Key = key;
+					_activateButton = existing;
+					Logger.LogInfo("Reused Jotunn activate button after reload.");
+					return;
+				}
+			}
+			catch (Exception ex)
+			{
+				Logger.LogWarning("Activate button reuse failed: " + ex.Message);
+			}
+
+			_activateButton = new ButtonConfig
+			{
+				Name = ActivateButtonName,
+				Key = key,
+				ActiveInGUI = false,
+				ActiveInCustomGUI = false
+			};
+			InputManager.Instance.AddButton(PluginGuid, _activateButton);
+		}
+
+		/// <summary>
+		/// ActivateKey edge. Jötunn registers as Name!guid; also accept short name and raw KeyCode
+		/// so ScriptEngine reloads / missing ZInput defs still work.
+		/// </summary>
+		internal static bool WasActivatePressed()
+		{
+			ButtonConfig btn = null;
+			try
+			{
+				FieldInfo buttonsField = AccessTools.Field(typeof(InputManager), "Buttons");
+				var buttons = buttonsField?.GetValue(null) as Dictionary<string, ButtonConfig>;
+				if (buttons != null)
+				{
+					buttons.TryGetValue(ActivateButtonName + "!" + PluginGuid, out btn);
+				}
+			}
+			catch
+			{
+				// ignored
+			}
+
+			if (btn != null && ZInput.GetButtonDown(btn.Name))
+			{
+				return true;
+			}
+
+			if (ZInput.GetButtonDown(ActivateButtonName))
+			{
+				return true;
+			}
+
+			KeyCode key = ActivateKey != null ? ActivateKey.Value : KeyCode.Delete;
+			return UnityEngine.Input.GetKeyDown(key);
 		}
 
 		private void OnActivateKeyChanged(object sender, EventArgs e)
@@ -198,21 +329,33 @@ namespace Dismantleheim
 			DebugLogging = Config.Bind(
 				"General",
 				"DebugLogging",
-				false,
-				"Write diagnostic lines to BepInEx LogOutput.log.");
+				true,
+				"Write diagnostic lines to BepInEx LogOutput.log. Default on while debugging selection.");
+
+			DefaultMode = Config.Bind(
+				"Modes",
+				"DefaultMode",
+				"MassDismantle",
+				"Mode entered by ActivateKey / activate command: MassDismantle or MassDelete.");
+			ShowActiveMode = Config.Bind("Modes", "ShowActiveMode", true, "Show MASS DISMANTLE / MASS DELETE banner near the cursor.");
+			PreserveSelectionOnModeSwitch = Config.Bind(
+				"Modes",
+				"PreserveSelectionOnModeSwitch",
+				true,
+				"Keep the queue when switching between Mass Dismantle and Mass Delete (revalidated; never executes).");
 
 			ActivateKey = Config.Bind(
 				"Input",
 				"ActivateKey",
 				KeyCode.Delete,
-				"Toggle Dismantleheim mode on/off. Default: Delete. Live-rebinding updates the Jötunn button.");
+				"Toggle DefaultMode session on/off. Default: Delete. Does not switch modes.");
 
 			ConfirmHoldSeconds = Config.Bind(
 				"Confirm",
 				"HoldSeconds",
 				1.0f,
 				new ConfigDescription(
-					"Seconds to hold Mouse3 to confirm dismantle.",
+					"Seconds to hold Mouse3 to confirm.",
 					new AcceptableValueRange<float>(0.2f, 5f)));
 			ShowRing = Config.Bind("Confirm", "ShowRing", true, "Draw the confirmation progress ring around the cursor.");
 			ShowSelectedCount = Config.Bind("Confirm", "ShowSelectedCount", true, "Show selected object count near the reticle.");
@@ -221,12 +364,24 @@ namespace Dismantleheim
 				"Selection",
 				"AllowEnvironmentWithFilter",
 				true,
-				"When a prefab filter is sampled, allow rocks/trees matching that prefab into the queue.");
+				"Mass Delete only: when a prefab filter is sampled, allow matching rocks/trees into the queue.");
+			DragSelectRadius = Config.Bind(
+				"Selection",
+				"DragSelectRadius",
+				40f,
+				new ConfigDescription(
+					"Unused legacy key (box-select removed). Mass-select is Satisfactory-style Ctrl + aim paint.",
+					new AcceptableValueRange<float>(5f, 120f)));
 			ClearQueueOnToolSwitch = Config.Bind(
 				"Selection",
 				"ClearQueueOnToolSwitch",
 				true,
 				"Clear the pending selection when leaving Dismantleheim mode.");
+			MaximumTargets = Config.Bind(
+				"Selection",
+				"MaximumTargets",
+				50,
+				new ConfigDescription("Maximum queued targets.", new AcceptableValueRange<int>(1, 500)));
 			ExtraDenyPrefabs = Config.Bind(
 				"Selection",
 				"ExtraDenyPrefabs",
@@ -238,11 +393,22 @@ namespace Dismantleheim
 				"",
 				"Comma-separated prefab names that ignore ExtraDeny only. Does not bypass type/removability/environment rules.");
 
+			WarnWhenDeletingOccupiedContainers = Config.Bind(
+				"Safety",
+				"WarnWhenDeletingOccupiedContainers",
+				true,
+				"Mass Delete: show contents-loss warning when queued containers hold items.");
+			RefuseUnknownDeleteTargets = Config.Bind(
+				"Safety",
+				"RefuseUnknownDeleteTargets",
+				true,
+				"Mass Delete: skip unsupported/unknown targets instead of forcing network destroy.");
+
 			InstallInfinityHammerTool = Config.Bind(
 				"Integration",
 				"InstallInfinityHammerTool",
 				true,
-				"Write owned infinity_tools_dismantleheim.yaml when Infinity Hammer is installed.");
+				"Write owned infinity_tools_dismantleheim.yaml (two Tools entries) when Infinity Hammer is installed.");
 			PreferInfinityHammerOnly = Config.Bind(
 				"Integration",
 				"PreferInfinityHammerOnly",
@@ -253,7 +419,17 @@ namespace Dismantleheim
 				"Removal",
 				"DryRunOnly",
 				true,
-				"When true (v0.1 default), confirmation only logs the exact removal plan — no world deletes.");
+				"When true (default for ship), confirmation only logs the plan — no world deletes. Set false on a disposable world to actually dismantle/delete.");
+		}
+
+		internal static OperationMode GetDefaultMode()
+		{
+			if (DefaultMode != null && OperationModeUtil.TryParse(DefaultMode.Value, out OperationMode mode))
+			{
+				return mode;
+			}
+
+			return OperationMode.MassDismantle;
 		}
 
 		private void Update()
@@ -280,7 +456,18 @@ namespace Dismantleheim
 				return;
 			}
 
+			DragBoxSelector.DrawGui();
 			ConfirmationRing.DrawGui(Session);
+		}
+
+		internal static float GetDragSelectRadius()
+		{
+			if (DragSelectRadius == null)
+			{
+				return 40f;
+			}
+
+			return Mathf.Clamp(DragSelectRadius.Value, 5f, 120f);
 		}
 
 		internal static bool IsModEnabled()
@@ -292,7 +479,8 @@ namespace Dismantleheim
 		{
 			if (DebugEnabled && ModLogger != null)
 			{
-				ModLogger.LogDebug(message);
+				// Use Info — BepInEx often filters LogDebug out of LogOutput.log.
+				ModLogger.LogInfo("Dismantleheim debug: " + message);
 			}
 		}
 
@@ -329,7 +517,7 @@ namespace Dismantleheim
 			_commandsRegistered = true;
 			new Terminal.ConsoleCommand(
 				"dismantleheim",
-				"Dismantleheim: activate|deactivate|status|clear|why",
+				"Dismantleheim: mode dismantle|delete | activate|deactivate|status|clear|why",
 				args =>
 				{
 					DismantleSession session = Session;
@@ -354,10 +542,22 @@ namespace Dismantleheim
 					string sub = args.Length > 1 ? args[1].ToLowerInvariant() : "status";
 					switch (sub)
 					{
-						case "activate":
-							if (session.TryActivate("command", out string reject))
+						case "mode":
+							string modeArg = args.Length > 2 ? args[2] : string.Empty;
+							if (!OperationModeUtil.TryParse(modeArg, out OperationMode parsed))
 							{
-								PrintCmd("Dismantleheim activated.");
+								PrintCmd("Usage: dismantleheim mode dismantle|delete");
+								break;
+							}
+
+							session.SetMode(parsed, "command");
+							PrintCmd("Dismantleheim mode=" + OperationModeUtil.ShortName(session.ActiveMode)
+							         + " active=" + session.IsActive);
+							break;
+						case "activate":
+							if (session.TryActivate(GetDefaultMode(), "command", out string reject))
+							{
+								PrintCmd("Dismantleheim activated mode=" + OperationModeUtil.ShortName(session.ActiveMode));
 							}
 							else
 							{
@@ -382,6 +582,7 @@ namespace Dismantleheim
 						default:
 							PrintCmd(
 								"state=" + session.StateMachine.State
+								+ " mode=" + OperationModeUtil.ShortName(session.ActiveMode)
 								+ " queue=" + session.Queue.Count
 								+ " filter=" + (session.Sampler.ActiveFilter ?? "(none)")
 								+ " dryRun=" + (DryRunOnly != null && DryRunOnly.Value)

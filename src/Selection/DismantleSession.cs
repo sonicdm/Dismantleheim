@@ -26,13 +26,24 @@ namespace Dismantleheim.Selection
 
 		public int IgnorePieceChangeFrames { get; set; }
 
+		public OperationMode ActiveMode { get; private set; } = OperationMode.MassDismantle;
+
+		public bool HasContentsLossWarning { get; private set; }
+
 		private List<TargetIdentity> _confirmSnapshot;
 
 		public bool IsActive => StateMachine.State != DismantleState.Inactive;
 
 		public bool TryActivate(string source, out string reject)
 		{
+			return TryActivate(ActiveMode, source, out reject);
+		}
+
+		public bool TryActivate(OperationMode mode, string source, out string reject)
+		{
 			reject = null;
+			ActiveMode = mode;
+
 			if (StateMachine.State != DismantleState.Inactive)
 			{
 				return true;
@@ -45,7 +56,6 @@ namespace Dismantleheim.Selection
 				return false;
 			}
 
-			// Ownership requires hammer place-mode so attack suppression cannot stick on a non-tool.
 			if (!player.InPlaceMode())
 			{
 				reject = "not-in-place-mode";
@@ -54,10 +64,33 @@ namespace Dismantleheim.Selection
 			}
 
 			StateMachine.TryTransition(DismantleTransition.Activate, Queue.Count, out _);
-			IgnorePieceChangeFrames = 3;
+			// IH instant Tools storm SetSelectedPiece after the command; keep grace long enough
+			// that selecting the tool from the build menu cannot immediately deactivate us.
+			IgnorePieceChangeFrames = 180;
 			ToolIdentityTracker.OnActivated();
 			ContextualInputRouter.ResetLatches();
-			DismantleheimPlugin.ModLogger?.LogInfo("Dismantleheim activate via " + source);
+			DragBoxSelector.Cancel();
+			RefreshContentsWarning();
+
+			Player local = Player.m_localPlayer;
+			bool place = (UObject)(object)local != (UObject)null && local.InPlaceMode();
+			string right = (UObject)(object)local != (UObject)null && local.RightItem != null
+				? ((local.RightItem.m_shared != null ? local.RightItem.m_shared.m_name : "?")
+				   + "|" + (local.RightItem.m_dropPrefab != null ? local.RightItem.m_dropPrefab.name : "?"))
+				: "empty";
+			DismantleheimPlugin.ModLogger?.LogInfo(
+				"Dismantleheim activate via " + source
+				+ " mode=" + OperationModeUtil.ShortName(ActiveMode)
+				+ " state=" + StateMachine.State
+				+ " place=" + place
+				+ " item=" + right
+				+ " grace=" + IgnorePieceChangeFrames);
+
+			if ((UObject)(object)local != (UObject)null)
+			{
+				local.Message(MessageHud.MessageType.TopLeft, OperationModeUtil.Banner(ActiveMode));
+			}
+
 			return true;
 		}
 
@@ -66,8 +99,45 @@ namespace Dismantleheim.Selection
 			TryActivate(source, out _);
 		}
 
+		/// <summary>Switch mode without executing. Preserves queue when configured; never widens set.</summary>
+		public void SetMode(OperationMode mode, string source)
+		{
+			if (ActiveMode == mode && IsActive)
+			{
+				return;
+			}
+
+			ConfirmHold.Cancel();
+			ClearConfirmSnapshot();
+
+			bool preserve = DismantleheimPlugin.PreserveSelectionOnModeSwitch == null
+			                || DismantleheimPlugin.PreserveSelectionOnModeSwitch.Value;
+			OperationMode previous = ActiveMode;
+			ActiveMode = mode;
+
+			if (!IsActive)
+			{
+				TryActivate(mode, source, out _);
+				return;
+			}
+
+			if (!preserve)
+			{
+				Queue.Clear();
+			}
+
+			RefreshContentsWarning();
+			SyncStateAfterSelectionChange();
+			DismantleheimPlugin.ModLogger?.LogInfo(
+				"Dismantleheim mode " + OperationModeUtil.ShortName(previous)
+				+ " → " + OperationModeUtil.ShortName(mode) + " via " + source
+				+ " queue=" + Queue.Count);
+		}
+
 		public void Deactivate(string source)
 		{
+			int q = Queue.Count;
+			DismantleState prev = StateMachine.State;
 			ConfirmHold.Cancel();
 			ConfirmHold.Rearm();
 			ClearConfirmSnapshot();
@@ -77,14 +147,18 @@ namespace Dismantleheim.Selection
 			}
 
 			HoverTarget = null;
+			HasContentsLossWarning = false;
 			StateMachine.ForceInactive();
 			ToolIdentityTracker.OnDeactivated();
 			ContextualInputRouter.ResetLatches();
 			HoverHighlighter.ClearAll();
-			DismantleheimPlugin.ModLogger?.LogInfo("Dismantleheim deactivate via " + source + " queue=" + Queue.Count);
+			DismantleheimPlugin.ModLogger?.LogInfo(
+				"Dismantleheim deactivate via " + source
+				+ " queue=" + q
+				+ " wasState=" + prev
+				+ " mode=" + OperationModeUtil.ShortName(ActiveMode));
 		}
 
-		/// <summary>Always clears queue/filter — used for disconnect/world epoch, not ordinary tool switch.</summary>
 		public void ResetHard(string source)
 		{
 			Queue.Clear();
@@ -93,6 +167,7 @@ namespace Dismantleheim.Selection
 			ConfirmHold.Rearm();
 			ClearConfirmSnapshot();
 			HoverTarget = null;
+			HasContentsLossWarning = false;
 			StateMachine.ForceInactive();
 			ToolIdentityTracker.OnDeactivated();
 			ContextualInputRouter.ResetLatches();
@@ -108,12 +183,14 @@ namespace Dismantleheim.Selection
 			}
 			else
 			{
-				Activate(source);
+				OperationMode def = DismantleheimPlugin.GetDefaultMode();
+				TryActivate(def, source, out _);
 			}
 		}
 
 		public void SyncStateAfterSelectionChange()
 		{
+			RefreshContentsWarning();
 			if (!IsActive)
 			{
 				return;
@@ -147,6 +224,35 @@ namespace Dismantleheim.Selection
 		public bool AllowEnvWithFilter =>
 			DismantleheimPlugin.AllowEnvironmentWithFilter == null || DismantleheimPlugin.AllowEnvironmentWithFilter.Value;
 
+		public int MaximumTargets =>
+			DismantleheimPlugin.MaximumTargets != null ? DismantleheimPlugin.MaximumTargets.Value : 50;
+
+		public void RefreshContentsWarning()
+		{
+			HasContentsLossWarning = false;
+			if (ActiveMode != OperationMode.MassDelete)
+			{
+				return;
+			}
+
+			if (DismantleheimPlugin.WarnWhenDeletingOccupiedContainers != null
+			    && !DismantleheimPlugin.WarnWhenDeletingOccupiedContainers.Value)
+			{
+				return;
+			}
+
+			foreach (TargetIdentity id in Queue.Entries)
+			{
+				GameObject go = ExactObjectExecutor.ResolveInstance(id);
+				if ((UObject)(object)go != (UObject)null
+				    && ContainerContentsInspector.HasStoredItems(go, out _))
+				{
+					HasContentsLossWarning = true;
+					return;
+				}
+			}
+		}
+
 		public void CommitDryOrReal()
 		{
 			try
@@ -160,45 +266,23 @@ namespace Dismantleheim.Selection
 					? (IReadOnlyList<TargetIdentity>)_confirmSnapshot
 					: Queue.Snapshot();
 
-				var revalidated = new List<TargetIdentity>();
-				var skipped = new List<TargetIdentity>();
-				foreach (TargetIdentity queued in source)
-				{
-					if (!TargetResolver.TryRevalidate(queued, out TargetIdentity live, out string detail))
-					{
-						skipped.Add(queued);
-						DismantleheimPlugin.DebugLog("Revalidate skip " + (queued != null ? queued.PrefabName : "?") + " " + detail);
-						continue;
-					}
-
-					// Commit must not re-apply the current candidate filter to a mixed queue.
-					if (!Eligibility.IsEligibleForCommit(
-						    live,
-						    AllowEnvWithFilter,
-						    ExtraDeny(),
-						    ExtraAllow(),
-						    out EligibilityRejectReason reason))
-					{
-						skipped.Add(live);
-						DismantleheimPlugin.DebugLog("Commit safety skip " + live.PrefabName + " " + reason);
-						continue;
-					}
-
-					revalidated.Add(live);
-				}
-
-				RemovalPlan plan = RemovalPlan.FromQueue(revalidated, id => id != null && !id.IsStale, out List<TargetIdentity> planSkipped);
-				skipped.AddRange(planSkipped);
+				List<RemovalPlanEntry> plan = PreflightBatchValidator.BuildPlan(
+					ActiveMode,
+					source,
+					AllowEnvWithFilter,
+					ExtraDeny(),
+					ExtraAllow(),
+					out _);
 
 				StateMachine.TryTransition(DismantleTransition.ValidationDone, plan.Count, out _);
 
-				List<RemovalResult> results = ExactObjectExecutor.Execute(plan, skipped);
-				foreach (RemovalResult r in results)
+				List<RemovalResult> results = ExactObjectExecutor.Execute(ActiveMode, plan);
+				ExecutionResultReporter.LogAll(results);
+				string summary = ExecutionResultReporter.Summarize(results, ActiveMode);
+				DismantleheimPlugin.ModLogger?.LogInfo(summary);
+				if (Console.instance != null)
 				{
-					string line = (r.Removed ? "REMOVED " : "SKIP ")
-					              + (r.Target != null ? r.Target.PrefabName + "#" + r.Target.NetworkId : "?")
-					              + " " + r.SkipReason + " " + r.Message;
-					DismantleheimPlugin.ModLogger?.LogInfo(line);
+					Console.instance.Print("Dismantleheim " + summary);
 				}
 
 				bool dry = DismantleheimPlugin.DryRunOnly == null || DismantleheimPlugin.DryRunOnly.Value;
@@ -212,6 +296,8 @@ namespace Dismantleheim.Selection
 						}
 					}
 				}
+
+				RefreshContentsWarning();
 			}
 			catch (Exception ex)
 			{
@@ -225,9 +311,22 @@ namespace Dismantleheim.Selection
 				if (StateMachine.State == DismantleState.Executing || StateMachine.State == DismantleState.Validating)
 				{
 					StateMachine.ForceInactive();
-					TryActivate("post-commit", out _);
+					TryActivate(ActiveMode, "post-commit", out _);
 					SyncStateAfterSelectionChange();
 				}
+				else if (IsActive)
+				{
+					// Commit often flickers held-item / place-mode; rebind instead of tearing down.
+					IgnorePieceChangeFrames = System.Math.Max(IgnorePieceChangeFrames, 45);
+					ToolIdentityTracker.RefreshBaseline("post-commit");
+					SyncStateAfterSelectionChange();
+				}
+
+				DismantleheimPlugin.ModLogger?.LogInfo(
+					"Dismantleheim post-commit state=" + StateMachine.State
+					+ " active=" + IsActive
+					+ " queue=" + Queue.Count
+					+ " grace=" + IgnorePieceChangeFrames);
 			}
 		}
 	}

@@ -4,39 +4,32 @@ Guidance for Cursor agents (and humans) working in this repo.
 
 ## What this is
 
-Valheim **BepInEx** mod: Satisfactory-inspired queued dismantle through the Hammer. Selection-first; confirm with hold Mouse3. Infinity Hammer Tools entry when installed; ActivateKey (default Delete) always available.
+Valheim **BepInEx** mod: Satisfactory-inspired queued selection with two modes — **Mass Dismantle** (vanilla refunds) and **Mass Delete** (no drops). Infinity Hammer Tools entries when installed; ActivateKey (default Delete) toggles DefaultMode.
 
 | | |
 | --- | --- |
 | GUID | `com.sonicdm.valheim.dismantleheim` |
 | Assembly | `Dismantleheim.dll` |
 | Source | `src/` + `src.Core/` (Core sources compile into the plugin DLL) |
-| Tests | `tests/` via `.\test.ps1` (Core.Tests / Installer.Tests / AssemblyCompatibility.Tests) |
+| Tests | `tests/` via `.\test.ps1` |
 
 ## Product rules
 
 - Never wildcard / `id=*` area deletes. Exact queued identities only.
-- No second inventory Hammer from this mod. IH entry via owned equipment-keyed `infinity_tools_dismantleheim.yaml` (never append into shared default except stale cleanup).
-- Unfiltered selection: `Piece` + `m_canBeRemoved`, deny environment (`TreeBase` / `MineRock*` / …). No generated piece allowlist. `ExtraAllow` never bypasses type/env rules.
-- Prefab sample (Shift+Mouse3) may allow matching environment into the queue; permissions still apply at execute.
-- Real remove (when dry-run off): `CheckCanRemovePiece` + ward `CheckAccess` + `WearNTear.Remove` — not `Player.RemovePiece`.
-- v0.1: `Removal.DryRunOnly=true` by default — no world deletes until acceptance gate for 0.2.
+- No second inventory Hammer. Owned `infinity_tools_dismantleheim.yaml` with **two** Tools entries (`mode dismantle` / `mode delete`).
+- Separate policies/adapters — no `RemoveEverything(bool)`.
+- Mass Dismantle: build pieces only; `WearNTear.Remove` + `Piece.DropResources`; occupied chests follow `Piece.CanBeRemoved`.
+- Mass Delete: no DropResources; env only with prefab filter + WearNTear preview; occupied containers warn then may delete.
+- ExtraAllow never bypasses type/env/preview rules.
+- `Removal.DryRunOnly=true` by default until Gate B/C.
 - Client systems skip when `GUIManager.IsHeadless()`.
 - Do not patch Infinity Hammer private APIs.
 
 ## Entry
 
-1. Infinity Hammer: `hammer_menu` → Tools → **Dismantleheim**
-2. Hotkey: `ActivateKey` (default Delete)
-3. Console: `dismantleheim activate|deactivate|status|clear|why`
-
-## Valheim references
-
-```text
-E:\Scripts\Valheim Mods\Reqs
-```
-
-Never commit those DLLs. GitHub Actions only refresh release notes from `CHANGELOG.md`.
+1. Infinity Hammer: `hammer_menu` → Tools → **Mass Dismantle** or **Mass Delete**
+2. Hotkey: `ActivateKey` (default Delete) → DefaultMode
+3. Console: `dismantleheim mode dismantle|delete` · `activate|deactivate|status|clear|why`
 
 ## Build habits
 
@@ -45,16 +38,10 @@ Never commit those DLLs. GitHub Actions only refresh release notes from `CHANGEL
 .\test.ps1
 ```
 
-Prefer build/test only while iterating — do not package/release unless asked.
-
-## Version bumps
-
-Stay on **`0.1.0`** until the user says to ship. Keep PluginVersion / csproj / manifest / README / CHANGELOG aligned when shipping.
-
-## Install
-
-Do **not** copy the DLL into an r2modman profile unless asked. Output: `bin\Release\Dismantleheim.dll` and `dist\Dismantleheim.dll`.
+Shipped **`0.1.0` beta**. Bump all five version locations + `CHANGELOG.md` before the next release. Do not copy DLL into r2modman/Gale unless the user asks (or is blocked testing a live install). Active Gale profile: `com.kesomannen.gale\valheim\profiles\Default`.
 
 ## Acceptance
 
-See [docs/acceptance-Hxx.md](docs/acceptance-Hxx.md). Fail ship if the version gate tests fail.
+- Prior selection/confirm: [docs/acceptance-Hxx.md](docs/acceptance-Hxx.md)
+- Dual-mode: [docs/acceptance-Gxx.md](docs/acceptance-Gxx.md)
+- Authority spike: [docs/authority.md](docs/authority.md)

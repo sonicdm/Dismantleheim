@@ -90,17 +90,62 @@ namespace Dismantleheim.Core
 		Ward,
 		UnsupportedEnvironment,
 		WildcardRejected,
-		DryRun
+		DryRun,
+		UnsafeDelete,
+		ModeIneligible,
+		/// <summary>Destroy RPC issued; instance still present — not counted as Removed.</summary>
+		PendingNetwork
+	}
+
+	public sealed class RemovalPlanEntry
+	{
+		public RemovalPlanEntry(
+			TargetIdentity target,
+			OperationMode mode,
+			DropPolicy dropPolicy,
+			RemovalSkipReason skipReason,
+			string message,
+			bool contentsLossWarning)
+		{
+			Target = target;
+			Mode = mode;
+			DropPolicy = dropPolicy;
+			SkipReason = skipReason;
+			Message = message ?? string.Empty;
+			ContentsLossWarning = contentsLossWarning;
+		}
+
+		public TargetIdentity Target { get; }
+
+		public OperationMode Mode { get; }
+
+		public DropPolicy DropPolicy { get; }
+
+		public RemovalSkipReason SkipReason { get; }
+
+		public string Message { get; }
+
+		public bool ContentsLossWarning { get; }
+
+		public bool IsExecutable => SkipReason == RemovalSkipReason.None || SkipReason == RemovalSkipReason.DryRun;
 	}
 
 	public sealed class RemovalResult
 	{
-		public RemovalResult(TargetIdentity target, bool removed, RemovalSkipReason skipReason, string message)
+		public RemovalResult(
+			TargetIdentity target,
+			bool removed,
+			RemovalSkipReason skipReason,
+			string message,
+			DropPolicy dropPolicy = DropPolicy.None,
+			OperationMode mode = OperationMode.MassDismantle)
 		{
 			Target = target;
 			Removed = removed;
 			SkipReason = skipReason;
 			Message = message ?? string.Empty;
+			DropPolicy = dropPolicy;
+			Mode = mode;
 		}
 
 		public TargetIdentity Target { get; }
@@ -110,5 +155,9 @@ namespace Dismantleheim.Core
 		public RemovalSkipReason SkipReason { get; }
 
 		public string Message { get; }
+
+		public DropPolicy DropPolicy { get; }
+
+		public OperationMode Mode { get; }
 	}
 }

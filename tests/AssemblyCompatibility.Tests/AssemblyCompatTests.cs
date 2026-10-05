@@ -35,6 +35,9 @@ namespace Dismantleheim.Tests.AssemblyCompatibility
 				Assert.Contains(player.Methods, m => m.Name == "RemovePiece" && m.Parameters.Count == 0);
 				Assert.Contains(player.Methods, m => m.Name == "CheckCanRemovePiece");
 
+				Assert.Contains(piece.Methods, m => m.Name == "CanBeRemoved");
+				Assert.Contains(piece.Methods, m => m.Name == "DropResources");
+
 				TypeDefinition wear = module.Types.FirstOrDefault(t => t.Name == "WearNTear");
 				Assert.NotNull(wear);
 				Assert.Contains(wear.Methods, m => m.Name == "Remove");
@@ -43,6 +46,10 @@ namespace Dismantleheim.Tests.AssemblyCompatibility
 				TypeDefinition privateArea = module.Types.FirstOrDefault(t => t.Name == "PrivateArea");
 				Assert.NotNull(privateArea);
 				Assert.Contains(privateArea.Methods, m => m.Name == "CheckAccess");
+
+				TypeDefinition container = module.Types.FirstOrDefault(t => t.Name == "Container");
+				Assert.NotNull(container);
+				Assert.Contains(container.Methods, m => m.Name == "CanBeRemoved");
 			}
 		}
 	}

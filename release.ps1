@@ -17,6 +17,9 @@
 
 .PARAMETER DryRun
   Validate and print what would happen; make no git/GitHub changes.
+
+.PARAMETER Prerelease
+  Mark the GitHub Release as a prerelease (beta).
 #>
 param(
     [string]$LibDir = "E:\Scripts\Valheim Mods\Reqs",
@@ -24,7 +27,8 @@ param(
     [string]$Configuration = "Release",
     [switch]$SkipPackage,
     [switch]$SkipPush,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$Prerelease
 )
 
 $ErrorActionPreference = "Stop"
@@ -148,11 +152,16 @@ $branch = (git rev-parse --abbrev-ref HEAD).Trim()
 Write-Host "Creating annotated tag $tag on $branch..."
 git tag -a $tag -m "Release $version"
 
+$releaseTitle = if ($Prerelease) { "$modName $version (beta)" } else { "$modName $version" }
+$prereleaseArgs = @()
+if ($Prerelease) { $prereleaseArgs = @("--prerelease") }
+
 if ($SkipPush) {
     Write-Host "SkipPush: tag created locally. Push and publish with:"
     Write-Host "  git push origin $branch"
     Write-Host "  git push origin $tag"
-    Write-Host "  gh release create $tag `"$zipPath`" --title `"$modName $version`" --notes-file `"$notesFile`""
+    $preFlag = if ($Prerelease) { " --prerelease" } else { "" }
+    Write-Host "  gh release create $tag `"$zipPath`" --title `"$releaseTitle`" --notes-file `"$notesFile`"$preFlag"
     exit 0
 }
 
@@ -177,12 +186,12 @@ if ($releaseExists) {
     Write-Host "Release $tag already exists; uploading assets and refreshing notes..."
     gh release upload $tag $zipPath --clobber
     if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
-    gh release edit $tag --title "$modName $version" --notes-file $notesFile
+    & gh release edit $tag --title $releaseTitle --notes-file $notesFile @prereleaseArgs
     if ($LASTEXITCODE -ne 0) { throw "gh release edit failed" }
 }
 else {
     Write-Host "Creating GitHub release $tag..."
-    gh release create $tag $zipPath --title "$modName $version" --notes-file $notesFile
+    & gh release create $tag $zipPath --title $releaseTitle --notes-file $notesFile @prereleaseArgs
     if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
 }
 
