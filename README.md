@@ -12,13 +12,13 @@ Nothing is removed on hover, select, tool switch, or mode switch. Hold Mouse3 to
 | Version | 0.1.0 (beta) |
 | GUID | `com.sonicdm.valheim.dismantleheim` |
 | Dependencies | BepInExPack Valheim, [Jötunn](https://thunderstore.io/c/valheim/p/ValheimModding/Jotunn/) |
-| Soft dependency | [Infinity Hammer](https://thunderstore.io/c/valheim/p/JereKuusela/Infinity_Hammer/) (Tools menu entries) |
+| Soft dependency | Infinity Hammer — Tools menu entries ([Thunderstore](https://thunderstore.io/c/valheim/p/JereKuusela/Infinity_Hammer/) · [Hexium](https://valheim.hexium.gg/mods/JereKuusela/Infinity_Hammer)) |
 
 ## How to get the tools
 
 ### With Infinity Hammer (recommended)
 
-1. Install Infinity Hammer (+ Server Devcommands / World Edit Commands as required by IH).
+1. Install [Infinity Hammer](https://thunderstore.io/c/valheim/p/JereKuusela/Infinity_Hammer/) ([Hexium](https://valheim.hexium.gg/mods/JereKuusela/Infinity_Hammer)) (+ Server Devcommands / World Edit Commands as required by IH).
 2. Run **`hammer_menu`** to spawn the Infinity Hammer.
 3. Equip it → build menu → category **hammer** → **Dismantleheim - Mass Dismantle** / **Dismantleheim - Mass Delete** (Hammer icons; IH loads `BepInEx/config/tools/infinity_tools*.yaml`).
 4. Or press **Delete** (`ActivateKey`) while in hammer placement mode.
@@ -79,7 +79,7 @@ Unfiltered selection: removable **Pieces** only. Mass Delete may include rocks/t
 
 ## Install / Build / Uninstall
 
-1. BepInExPack + Jötunn (+ Infinity Hammer for Tools entries).
+1. BepInExPack + Jötunn (+ [Infinity Hammer](https://thunderstore.io/c/valheim/p/JereKuusela/Infinity_Hammer/) / [Hexium](https://valheim.hexium.gg/mods/JereKuusela/Infinity_Hammer) for Tools entries).
 2. Place `Dismantleheim.dll` in `BepInEx/plugins/`.
 
 ```powershell

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- README soft-dependency links for Infinity Hammer on Thunderstore and Hexium
+
 ## 0.1.0
 
 Beta — first public package. Satisfactory-inspired dual-mode queued selection, live-tested on a disposable world. Same `0.1.0` tag was refreshed as this landed (icon, live default, docs).
