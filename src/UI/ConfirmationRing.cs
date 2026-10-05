@@ -40,7 +40,7 @@ namespace Dismantleheim.UI
 						sub += "  [" + session.Sampler.ActiveFilter + "]";
 					}
 
-					bool dry = DismantleheimPlugin.DryRunOnly == null || DismantleheimPlugin.DryRunOnly.Value;
+					bool dry = DismantleheimPlugin.DryRunOnly != null && DismantleheimPlugin.DryRunOnly.Value;
 					if (dry)
 					{
 						sub += "  (dry-run)";

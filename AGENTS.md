@@ -21,7 +21,7 @@ Valheim **BepInEx** mod: Satisfactory-inspired queued selection with two modes â
 - Mass Dismantle: build pieces only; `WearNTear.Remove` + `Piece.DropResources`; occupied chests follow `Piece.CanBeRemoved`.
 - Mass Delete: no DropResources; env only with prefab filter + WearNTear preview; occupied containers warn then may delete.
 - ExtraAllow never bypasses type/env/preview rules.
-- `Removal.DryRunOnly=true` by default until Gate B/C.
+- `Removal.DryRunOnly=false` by default (live remove). Set true for plan-only testing.
 - Client systems skip when `GUIManager.IsHeadless()`.
 - Do not patch Infinity Hammer private APIs.
 

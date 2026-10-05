@@ -9,7 +9,7 @@ namespace Dismantleheim.Removal
 		public static List<RemovalResult> Execute(OperationMode mode, List<RemovalPlanEntry> plan)
 		{
 			var results = new List<RemovalResult>();
-			bool dry = DismantleheimPlugin.DryRunOnly == null || DismantleheimPlugin.DryRunOnly.Value;
+			bool dry = DismantleheimPlugin.DryRunOnly != null && DismantleheimPlugin.DryRunOnly.Value;
 			if (plan == null)
 			{
 				return results;

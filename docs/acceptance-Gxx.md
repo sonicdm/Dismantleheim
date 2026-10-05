@@ -46,4 +46,4 @@ Addendum Mass Dismantle / Mass Delete gates. Record in-game results before shipp
 
 ## Ship rule
 
-Do **not** claim Gate B/C/D/E until required rows are `pass` on a disposable world with recorded game/IH versions. `DryRunOnly=true` remains the default until Gate B/C.
+Do **not** claim Gate B/C/D/E until required rows are `pass` on a disposable world with recorded game/IH versions. `DryRunOnly` defaults to false (live); use true when validating plan-only behavior.

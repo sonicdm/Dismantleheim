@@ -46,9 +46,9 @@ HUD shows `MASS DISMANTLE — Returns Materials` or `MASS DELETE — No Drops`, 
 
 Unfiltered selection: removable **Pieces** only. Mass Delete may include rocks/trees/props after an explicit prefab sample. Mass Dismantle never queues environment.
 
-## Dry-run default
+## Dry-run
 
-`Removal.DryRunOnly = true` by default. Confirmation logs the plan (mode + drop policy) without world deletes. Set `false` only on a disposable world after reading `docs/authority.md`.
+`Removal.DryRunOnly = false` by default (live dismantle/delete). Set `true` to log the plan only with no world deletes — useful for testing. Read `docs/authority.md` before enabling live remove on a valued world.
 
 ## Authority
 

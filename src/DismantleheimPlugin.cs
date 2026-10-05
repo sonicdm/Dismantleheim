@@ -418,8 +418,8 @@ namespace Dismantleheim
 			DryRunOnly = Config.Bind(
 				"Removal",
 				"DryRunOnly",
-				true,
-				"When true (default for ship), confirmation only logs the plan — no world deletes. Set false on a disposable world to actually dismantle/delete.");
+				false,
+				"When true, confirmation only logs the plan — no world deletes. Default false (live remove). Enable for safe testing.");
 		}
 
 		internal static OperationMode GetDefaultMode()

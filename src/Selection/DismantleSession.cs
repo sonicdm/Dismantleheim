@@ -285,7 +285,7 @@ namespace Dismantleheim.Selection
 					Console.instance.Print("Dismantleheim " + summary);
 				}
 
-				bool dry = DismantleheimPlugin.DryRunOnly == null || DismantleheimPlugin.DryRunOnly.Value;
+				bool dry = DismantleheimPlugin.DryRunOnly != null && DismantleheimPlugin.DryRunOnly.Value;
 				if (!dry)
 				{
 					foreach (RemovalResult r in results)

@@ -9,5 +9,5 @@ Beta release — dual-mode queued selection, live-tested on a disposable world.
 - Mass Delete: environment/props only after an explicit prefab sample; Mass Dismantle never queues env
 - Hover/selection glow for build pieces and env/props (MaterialMan tint)
 - Owned IH YAML install/migrate with conflict-safe preservation
-- `Removal.DryRunOnly` defaults **true** (ship-safe); set false only on disposable worlds
+- `Removal.DryRunOnly` defaults **false** (live remove); set true for plan-only testing
 - Automated Core + Installer tests; acceptance docs in `docs/acceptance-Gxx.md` / `docs/acceptance-Hxx.md`

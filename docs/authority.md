@@ -1,6 +1,6 @@
 # Removal authority (dual-mode)
 
-Observed against `assembly_valheim.dll` in workspace `Reqs` (spike for Phase E). Defaults: `Removal.DryRunOnly = true` — no world mutation until Gate B/C.
+Observed against `assembly_valheim.dll` in workspace `Reqs` (spike for Phase E). Default: `Removal.DryRunOnly = false` (live remove). Set true for plan-only testing.
 
 ## Spike: `Player.RemovePiece` (managed IL)
 
